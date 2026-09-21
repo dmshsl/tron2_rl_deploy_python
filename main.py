@@ -8,6 +8,8 @@ if __name__ == '__main__':
     parser.add_argument("robot_ip", nargs="?", default="127.0.0.1",
                         help="robot ip (default 127.0.0.1)")
     parser.add_argument("--sdk", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--dry-run", action="store_true",
+                        help="只校验并打印关节指令，不向机器人下发")
     args = parser.parse_args()
 
     # Get the robot type from the environment variable
@@ -39,6 +41,11 @@ if __name__ == '__main__':
     # Initialize the robot with the provided IP address
     if not robot.init(args.robot_ip):
         sys.exit()
+
+    if args.dry_run:
+        from controllers.dry_run import DryRunRobot
+        robot = DryRunRobot(robot, f'{model_dir}/{robot_type}/params.yaml')
+        print("\033[33m[DRY-RUN] 只校验并打印关节指令，不会向机器人下发任何指令。\033[0m")
 
     use_pygame_joystick = True
 

@@ -14,13 +14,17 @@ import limxsdk.robot.RobotType as RobotType
 import limxsdk.datatypes as datatypes
 
 try:
+    # 无图形会话时 SDL 初始化视频子系统会段错误，手柄只需 joystick 子系统
+    if not os.environ.get('DISPLAY') and not os.environ.get('WAYLAND_DISPLAY'):
+        os.environ.setdefault('SDL_VIDEODRIVER', 'dummy')
     import pygame
     PYGAME_AVAILABLE = True
 except ImportError:
     PYGAME_AVAILABLE = False
 
 class SolefootController:
-    JOY_BTNS = {"A": 0, "L1": 4, "R1": 5, "X": 2, "Y": 3}
+    # 自研遥控器按 PS 式枚举：× / ○ / □ / △
+    JOY_BTNS = {"CROSS": 0, "CIRCLE": 1, "SQUARE": 2, "TRIANGLE": 3, "L1": 4, "R1": 5}
     JOY_AXES = {"left_vertical": 1, "left_horizon": 0, "right_horizon": 2}
     PYGAME_AXES = {"left_vertical": 1, "left_horizon": 0, "right_horizon": 3}
 
@@ -92,6 +96,9 @@ class SolefootController:
 
         # Flag indicating first received observation
         self.is_first_rec_obs = True
+
+        # Flag indicating the first RobotState frame has arrived
+        self.robot_state_received = False
 
         self._use_pygame_joystick = use_pygame_joystick
         self._pygame_enabled = False
@@ -201,11 +208,24 @@ class SolefootController:
         for i in range(len(self.joint_names)):
             self.init_joint_angles[i] = self.init_state[self.joint_names[i]]
         
-        # Set initial mode to "STAND"
-        self.mode = "STAND"
+        # 上电后停在 IDLE，必须按 L1+○ 才进入 prepare
+        self.mode = "IDLE"
+
+    def wait_for_robot_state(self, timeout_sec=5.0):
+        deadline = time.time() + timeout_sec
+        while time.time() < deadline:
+            if self.robot_state_received:
+                return True
+            time.sleep(0.01)
+        return False
 
     # Main control loop
     def run(self):
+        # 首帧到达前 default_joint_angles 会退化成全 0，且 SDK 会拒发指令并刷屏报错
+        if not self.wait_for_robot_state():
+            print("\033[31mERROR: 未在 5s 内收到 RobotState，放弃启动。\033[0m")
+            return
+
         # Set the loop rate based on the frequency in the configuration
         rate = Rate(self.loop_frequency)
         
@@ -215,7 +235,8 @@ class SolefootController:
         print("=" * 60)
         print(f"TRON2 Policy Interface ready [{self.robot_type}]")
         print(f"Pygame Joystick: {'ENABLED' if self._pygame_enabled else 'DISABLED'}")
-        print("Start: L1 + Y, Stop: L1 + X, clear history: R1")
+        print("Prepare(进零位): L1 + ○, Start: L1 + △, Stop: L1 + ×, clear history: R1")
+        print(f"当前模式: {self.mode}（未按 L1 + ○ 前不会自动进零位）")
         print("=" * 60)
 
         while True:
@@ -473,18 +494,29 @@ class SolefootController:
 
     def _process_joystick(self, buttons, axes, r1_state_attr):
         l1 = buttons[self.JOY_BTNS["L1"]] if len(buttons) > self.JOY_BTNS["L1"] else 0
-        x_btn = buttons[self.JOY_BTNS["X"]] if len(buttons) > self.JOY_BTNS["X"] else 0
-        y_btn = buttons[self.JOY_BTNS["Y"]] if len(buttons) > self.JOY_BTNS["Y"] else 0
+        cross = buttons[self.JOY_BTNS["CROSS"]] if len(buttons) > self.JOY_BTNS["CROSS"] else 0
+        circle = buttons[self.JOY_BTNS["CIRCLE"]] if len(buttons) > self.JOY_BTNS["CIRCLE"] else 0
+        triangle = buttons[self.JOY_BTNS["TRIANGLE"]] if len(buttons) > self.JOY_BTNS["TRIANGLE"] else 0
         r1 = buttons[self.JOY_BTNS["R1"]] if len(buttons) > self.JOY_BTNS["R1"] else 0
 
-        if not self.start_controller and l1 and y_btn:
-            print("L1 + Y: start_controller...")
+        if l1 and circle and self.mode != "STAND":
+            print("L1 + ○: prepare...")
+            self.start_controller = False
+            # 从按下时的实测姿态开始插值，而不是启动时的旧快照
+            self.default_joint_angles = np.array(self.robot_state.q)
+            self.stand_percent = 0.0
+            self.mode = "STAND"
+            self._clear_history()
+            self._clear_commands()
+
+        if not self.start_controller and l1 and triangle:
+            print("L1 + △: start_controller...")
             self.start_controller = True
             self.mode = "WALK"
             self._clear_history()
 
-        if self.start_controller and l1 and x_btn:
-            print("L1 + X: stop_controller...")
+        if l1 and cross and self.mode != "IDLE":
+            print("L1 + ×: stop_controller...")
             self.start_controller = False
             self.mode = "IDLE"
             self._clear_history()
@@ -567,6 +599,7 @@ class SolefootController:
         robot_state (datatypes.RobotState): The current state of the robot.
         """
         self.robot_state = robot_state
+        self.robot_state_received = True
 
     # Callback function for receiving imu data
     def imu_data_callback(self, imu_data: datatypes.ImuData):
