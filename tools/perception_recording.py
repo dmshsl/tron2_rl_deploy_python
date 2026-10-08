@@ -71,8 +71,11 @@ def load_recording(path: Path) -> Recording:
               "camera_pose", "capture_gt_pose")
     if any(not np.isfinite(arrays[name]).all() for name in finite):
         raise RecordingError(path, "nonfinite state or calibration")
+    frame_ids = arrays["camera_frame"]
+    if not np.issubdtype(frame_ids.dtype, np.integer) or np.any(frame_ids < 0):
+        raise RecordingError(path, "camera_frame must contain nonnegative integer frame IDs")
     frame_segments = np.searchsorted(times[arrays["reset"]], captures, side="left")
-    repeated = (np.diff(arrays["camera_frame"], axis=0) <= 0).any(axis=1)
+    repeated = (frame_ids[1:] <= frame_ids[:-1]).any(axis=1)
     if (arrays["recording_version"].shape != () or arrays["recording_version"].item() != 1
             or not np.allclose(arrays["scan_offsets"], policy_offsets(), atol=1e-6)
             or not np.allclose(arrays["commands"], [.5, 0., 0.], atol=1e-6)

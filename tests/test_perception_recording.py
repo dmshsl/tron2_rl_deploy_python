@@ -41,7 +41,10 @@ def recording(path: Path, change: tuple[str, NDArray] | None = None) -> Path:
     ("reset", np.zeros(60), "reset must be boolean"),
     ("depth_timestamp", np.full(36, np.nan), "timestamps"),
     ("scan_offsets", policy_offsets()[::-1], "scan order"),
-    ("camera_frame", np.zeros((36, 2)), "unique frame"),
+    ("camera_frame", np.zeros((36, 2), dtype=np.int64), "unique frame"),
+    ("camera_frame", np.full((36, 2), np.nan), "integer frame IDs"),
+    ("camera_frame", np.repeat((np.arange(36) + .5)[:, None], 2, axis=1), "integer frame IDs"),
+    ("camera_frame", np.repeat((np.arange(36) - 1)[:, None], 2, axis=1), "integer frame IDs"),
     ("depth_rear", np.zeros((35, 480, 848)), "depth_rear: expected shape"),
 ])
 def test_rejects_malformed_recording(tmp_path: Path, field: str, value: NDArray, reason: str) -> None:
