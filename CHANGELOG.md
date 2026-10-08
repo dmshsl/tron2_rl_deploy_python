@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `contact@limxdynamics.com`.
 
 ### Changed
+- Base/BaseBlind ONNX arithmetic stabilized with FP64 internals and FLOAT32 interfaces
+  for 1e-5 Isaac trace parity; added a reproducible conversion tool, artifact provenance,
+  and five 300-step replay cases plus a zero-default-pose negative control.
 - `.gitignore` expanded from a single-line `__pycache__` to a
   Python-appropriate ignore list (venv, caches, editor / OS junk,
   build artifacts), plus a hard deny-list for weight / SDK / bag

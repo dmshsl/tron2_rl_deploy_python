@@ -5,7 +5,7 @@
 > before the first public release. Do **not** cut a public tag while
 > any `⚠ TO CONFIRM` remains.
 
-This document covers the six ONNX weight files checked into
+This document covers the ten ONNX weight files checked into
 `controllers/model/` in this repository. See
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) §2 for the
 license-status summary; this file is the operational / behavioral
@@ -21,6 +21,10 @@ model card.
 | `WF_TRON2A/encoder.onnx` | `controllers/model/WF_TRON2A/encoder.onnx` | 503 276 | `507d0630d78873f7aabfeab4eae9d7669610d709fcc903c4296d1908da54b3e7` | Observation encoder for `WF_TRON2A` |
 | `DASF_TRON2A/policy.onnx`  | `controllers/model/DASF_TRON2A/policy.onnx`  | 863 234 | `473bae82c4b09420f1013c37b234ab7475c0183b0e7f79df50c72f744b5fa0ca` | Policy network for `DASF_TRON2A` (dual-arm sole-foot humanoid) |
 | `DASF_TRON2A/encoder.onnx` | `controllers/model/DASF_TRON2A/encoder.onnx` | 852 848 | `31ff1f3f756298421c3d88e075103e5e9ada560573200f1ab42644ca7d14be51` | Observation encoder for `DASF_TRON2A` |
+| `WF_TRON2A_BASE/policy.onnx` | `controllers/model/WF_TRON2A_BASE/policy.onnx` | 2466343 | `986ab5baa65b8b7276ae6361faa5eee8b82618a92ff0a5d320a79f91277b5577` | Base actor 273 -> 10 |
+| `WF_TRON2A_BASE/encoder.onnx` | `controllers/model/WF_TRON2A_BASE/encoder.onnx` | 1023376 | `19ee847b56fc6911524ee566ce150a8ba7fd49e7fc33d079e504465eb99dace0` | Base history 360 -> 3 |
+| `WF_TRON2A_BASE_BLIND/policy.onnx` | `controllers/model/WF_TRON2A_BASE_BLIND/policy.onnx` | 1520164 | `628ed6c7a3b0ff4aa46ddb1ae2b2d10555c0d252398ed219e5109295e550c2d7` | BaseBlind actor 42 -> 10 |
+| `WF_TRON2A_BASE_BLIND/encoder.onnx` | `controllers/model/WF_TRON2A_BASE_BLIND/encoder.onnx` | 1023376 | `9dca7e0bcbdab2fbdc1eb9a34270afa05ca735372665f208b3c4c7ef184a01bc` | BaseBlind history 360 -> 3 |
 
 SF/WF SHA-256 values were recorded 2026-07-16. Those four blobs are byte-identical to
 `tron2-rl-deploy-ros/tron2_controllers/config/{SF,WF}_TRON2A/policy/{policy,encoder}.onnx`
@@ -36,6 +40,8 @@ Consumed by:
 - `SF_TRON2A/*` → `controllers/SolefootController.py`
 - `WF_TRON2A/*` → `controllers/WheelfootController.py`
 - `DASF_TRON2A/*` → `controllers/DASFController.py`
+- `WF_TRON2A_BASE*/*` -> `controllers/PolicyWheelfootController.py`, via `run_policy.py` only.
+  The vendor `main.py` is intentionally unchanged. These policies are localhost/simulation-only.
 
 ---
 
@@ -147,6 +153,53 @@ Consumed by:
 - **Redistribution status:** ⚠ TO CONFIRM
 
 ---
+
+## WF_TRON2A_BASE/policy.onnx
+
+- Checkpoint: V23ext `2026-09-21_11-03-33_seedB/model_23500.pt`.
+- Checkpoint SHA-256: `0d2385f11452e3a0f5900a211c74af8b67e1ef885bb640be9aa5ec2d20cce983`.
+- Training: Isaac simulation; full training-data rights and redistribution: ⚠ TO CONFIRM.
+- Evaluation: 300-step flat/stairs plus 15-degree roll/pitch reset replay, atol 1e-5, rtol 0.
+- Hardware evaluation: none; IMU mount, timestamp clock and firmware watchdog remain unverified.
+
+## WF_TRON2A_BASE/encoder.onnx
+
+Paired exclusively with Base above, same checkpoint/provenance and evaluation.
+Input is ten oldest-first 36-element frames. Redistribution: ⚠ TO CONFIRM.
+
+## WF_TRON2A_BASE_BLIND/policy.onnx
+
+- Checkpoint: V22 `2026-09-18_13-49-07_seedB/model_14500.pt`.
+- Checkpoint SHA-256: `ceb648783b5c40f0f85eb6411454ad030104b51b6f7e0ef3ccf3703c8ed3cccb`.
+- Training: Isaac simulation; full training-data rights and redistribution: ⚠ TO CONFIRM.
+- Evaluation: 300-step flat/stairs replay, including an automatic episode reset, atol 1e-5, rtol 0.
+- Hardware evaluation: none; same unverified hardware prerequisites as Base.
+
+## WF_TRON2A_BASE_BLIND/encoder.onnx
+
+Paired exclusively with BaseBlind above, same checkpoint/provenance and evaluation.
+Input is ten oldest-first 36-element frames. Redistribution: ⚠ TO CONFIRM.
+
+### Base model regeneration
+
+The four Base artifacts use FP64 internal arithmetic and FLOAT32 input/output to avoid
+FP32 ONNX accumulation error exceeding the strict Isaac parity threshold. Trained weights
+are unchanged. Models embed `tron2.internal_precision` and `tron2.source_sha256` metadata.
+The standard filenames are replaced in place; there are no `stable*.onnx` runtime files.
+No new inference dependency is needed (`onnx` is only an export-time dependency).
+
+1. From sibling `tron2_rl`, export each checkpoint using `export_onnx.py` into a scratch
+   directory, under `OMNI_KIT_ACCEPT_EULA=YES flock -w 1800 /tmp/isaac.lock timeout 900 ./run.sh`.
+   Use Base-Play / BaseBlind-Play and the checkpoints above.
+2. For each policy's `policy.onnx` and `encoder.onnx`, from this repo run
+   `python tools/stabilize_onnx.py --source <scratch-file> --out <deployment-file>`.
+   The output paths are the corresponding standard filenames in the model index above.
+   Conversion rejects already-converted/unsupported graphs; always begin with fresh exports.
+3. Update hashes/sizes here and in the notices. From the parent repository run
+   `python3 -m pytest tron2_deploy/tests/test_parity.py -q` with `TRON2_TRACE_DIR` pointing
+   to the independent Isaac traces. The test checks the FLOAT32 interface and precision metadata.
+4. Re-run both `run_policy.py --policy base --dry-run` and `--policy base_blind --dry-run`.
+   Do not use these results as permission for real-robot operation.
 
 ## Update procedure
 

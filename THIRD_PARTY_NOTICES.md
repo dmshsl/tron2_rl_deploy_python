@@ -32,7 +32,7 @@ applicable licenses and re-distribution terms.
 
 ## 2. Checked-in model weights (ONNX)
 
-This repository ships **six ONNX files** under `controllers/model/`.
+This repository ships **ten ONNX files** under `controllers/model/`.
 They are **binary weights, not source**, and their license status is
 independent of the Apache-2.0 license on the surrounding code.
 
@@ -44,6 +44,10 @@ independent of the Apache-2.0 license on the surrounding code.
 | `controllers/model/WF_TRON2A/encoder.onnx` | 503 276 | `507d0630d78873f7aabfeab4eae9d7669610d709fcc903c4296d1908da54b3e7` | [WF_TRON2A / encoder](MODEL_CARD.md#wf_tron2aencoderonnx) | ⚠ TO CONFIRM | ⚠ TO CONFIRM | ⚠ TO CONFIRM |
 | `controllers/model/DASF_TRON2A/policy.onnx`  | 863 234 | `473bae82c4b09420f1013c37b234ab7475c0183b0e7f79df50c72f744b5fa0ca` | [DASF_TRON2A / policy](MODEL_CARD.md#dasf_tron2apolicyonnx)  | ⚠ TO CONFIRM | ⚠ TO CONFIRM | ⚠ TO CONFIRM |
 | `controllers/model/DASF_TRON2A/encoder.onnx` | 852 848 | `31ff1f3f756298421c3d88e075103e5e9ada560573200f1ab42644ca7d14be51` | [DASF_TRON2A / encoder](MODEL_CARD.md#dasf_tron2aencoderonnx) | ⚠ TO CONFIRM | ⚠ TO CONFIRM | ⚠ TO CONFIRM |
+| `controllers/model/WF_TRON2A_BASE/policy.onnx` | 2466343 | `986ab5baa65b8b7276ae6361faa5eee8b82618a92ff0a5d320a79f91277b5577` | [Base / policy](MODEL_CARD.md#wf_tron2a_basepolicyonnx) | V23ext seedB @23500 | Isaac simulation; rights ⚠ TO CONFIRM | ⚠ TO CONFIRM |
+| `controllers/model/WF_TRON2A_BASE/encoder.onnx` | 1023376 | `19ee847b56fc6911524ee566ce150a8ba7fd49e7fc33d079e504465eb99dace0` | [Base / encoder](MODEL_CARD.md#wf_tron2a_baseencoderonnx) | V23ext seedB @23500 | Isaac simulation; rights ⚠ TO CONFIRM | ⚠ TO CONFIRM |
+| `controllers/model/WF_TRON2A_BASE_BLIND/policy.onnx` | 1520164 | `628ed6c7a3b0ff4aa46ddb1ae2b2d10555c0d252398ed219e5109295e550c2d7` | [BaseBlind / policy](MODEL_CARD.md#wf_tron2a_base_blindpolicyonnx) | V22 seedB @14500 | Isaac simulation; rights ⚠ TO CONFIRM | ⚠ TO CONFIRM |
+| `controllers/model/WF_TRON2A_BASE_BLIND/encoder.onnx` | 1023376 | `9dca7e0bcbdab2fbdc1eb9a34270afa05ca735372665f208b3c4c7ef184a01bc` | [BaseBlind / encoder](MODEL_CARD.md#wf_tron2a_base_blindencoderonnx) | V22 seedB @14500 | Isaac simulation; rights ⚠ TO CONFIRM | ⚠ TO CONFIRM |
 
 Evidence for SF/WF was collected 2026-07-16; DASF size and SHA-256
 were collected 2026-08-20. Digests were computed by `sha256sum` on
@@ -53,7 +57,10 @@ the working-tree files. The four SF/WF ONNX blobs are
 paths — this is one set of models under two locations. Any owner
 decision for those four files must be applied to both repos
 consistently. No sibling-repository equivalence is asserted for the
-DASF files. Reproduce all six digests with:
+DASF files. Base/BaseBlind hashes were recorded 2026-10-08 after FP64-internal
+conversion for strict Isaac parity, with FLOAT32 interfaces and unchanged weights.
+See the model card for checkpoint hashes, simulation-only limits and regeneration.
+Reproduce all ten digests with:
 
 ```bash
 sha256sum controllers/model/*/policy.onnx controllers/model/*/encoder.onnx
@@ -157,7 +164,7 @@ identifiers, or non-public hardware.
 - No SDK binaries (`.so`, `.dll`, `.dylib`, `.lib`, `.whl`) — SDK is
   installed by the user from a vendor wheel.
 - No PyTorch / training checkpoints (`.pt`, `.pth`, `.ckpt`) — only the
-   six ONNX inference blobs listed in §2.
+   ten ONNX inference blobs listed in §2.
 - No factory calibration values or per-serial calibration files.
 - No motion / bag / trajectory data.
 - No firmware.
