@@ -15,6 +15,16 @@ from tron2_deploy.perception.height_map import (
 )
 
 
+def test_camera_optical_axes_when_using_payload_mount() -> None:
+    # Given: the forward/rearward 45-degree downward D455 mounts.
+    front, rear = load_camera_extrinsics()
+    # When: transforming each optical forward axis into the base frame.
+    directions = np.stack((front[:3, 2], rear[:3, 2]))
+    # Then: neither camera looks sideways or upwards.
+    expected = np.array([[1., 0., -1.], [-1., 0., -1.]]) / np.sqrt(2)
+    np.testing.assert_allclose(directions, expected, atol=1e-5)
+
+
 def pose(yaw: float = 0.0, xyz: tuple[float, float, float] = (0, 0, 0.6)) -> NDArray[np.float64]:
     c, s = np.cos(yaw), np.sin(yaw)
     result = np.array([[c, -s, 0, 0], [s, c, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1.]])
@@ -141,15 +151,15 @@ def test_step_when_depths_contain_two_levels() -> None:
 
 @pytest.mark.parametrize("now,valid", [(5.999, True), (6.0, False), (6.1, False)])
 def test_memory_when_robot_moves_past_observed_cells(now: float, valid: bool) -> None:
-    # Given ground observed at world (0, 1.2) - within the camera's FOV, outside the grid.
+    # Given ground observed at world (1.2, 0) - within the forward FOV, outside the grid.
     mapper = HeightMap()
     mapper.update(frames(render_depths(pose())), pose(), 1.0)
-    moved = pose(xyz=(0, 1.2, 0.6))
+    moved = pose(xyz=(1.2, 0, 0.6))
     blank = frames((np.zeros((480, 848)), np.zeros((480, 848))), now)
     # When the base moves onto that world cell with no fresh depth, including at expiry.
     scan = mapper.update(blank, moved, now)
     # Then the old world cell is preserved, never moved with the robot.
-    k = 10 + 5 * 21  # local (0, 0), now coinciding with world (0, 1.2)
+    k = 10 + 5 * 21  # local (0, 0), now coinciding with world (1.2, 0)
     assert bool(scan.valid[k]) == valid
     assert scan.values[k] == pytest.approx(-0.3 if valid else -1)
     assert scan.age[k] == pytest.approx(now - 1) if valid else np.isinf(scan.age[k])
