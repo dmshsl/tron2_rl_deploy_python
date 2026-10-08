@@ -1,10 +1,9 @@
 from threading import Event
-from time import monotonic, time_ns
+from time import monotonic, monotonic_ns, time_ns
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
-
 from tron2_deploy.policy_observation import PolicyInputError
 from tron2_deploy.policy_sdk import SdkAdapter
 from tron2_deploy.policy_targets import JointTargets
@@ -84,5 +83,45 @@ def test_watchdog_when_startup_stalls_before_first_publish_releases():
         # Then the independent watchdog sends zero gains and stays latched.
         assert robot.released.wait(1.)
         assert adapter.tripped.is_set()
+    finally:
+        adapter.release()
+
+
+def test_source_timestamp_when_sdk_uses_monotonic_nanoseconds_accepts_state():
+    robot = FakeRobot()
+    adapter = SdkAdapter(robot, SimpleNamespace)
+    try:
+        robot.state_callback(SimpleNamespace(stamp=monotonic_ns(), q=np.zeros(10), dq=np.zeros(10)))
+        robot.imu_callback(SimpleNamespace(stamp=monotonic_ns(), quat=[1., 0., 0., 0.], gyro=np.zeros(3)))
+        state, _ = adapter.sample(monotonic())
+        np.testing.assert_array_equal(state.q, np.zeros(10))
+    finally:
+        adapter.release()
+
+
+def test_duplicate_source_timestamp_is_ignored_without_refreshing_age():
+    robot = FakeRobot()
+    adapter = SdkAdapter(robot, SimpleNamespace)
+    try:
+        stamp = time_ns()
+        message = SimpleNamespace(stamp=stamp, q=np.zeros(10), dq=np.zeros(10))
+        robot.state_callback(message)
+        accepted_time = adapter.state_time
+        robot.state_callback(message)
+        assert adapter.fault == ""
+        assert adapter.state_time == accepted_time
+    finally:
+        adapter.release()
+
+
+@pytest.mark.parametrize("stamp", [float("nan"), float("inf"), "invalid", None])
+def test_malformed_source_timestamp_does_not_refresh_sample(stamp):
+    robot = FakeRobot()
+    adapter = SdkAdapter(robot, SimpleNamespace)
+    try:
+        robot.state_callback(SimpleNamespace(stamp=stamp, q=np.zeros(10), dq=np.zeros(10)))
+        assert not adapter.ready_state.is_set()
+        with pytest.raises(PolicyInputError, match="source timestamp"):
+            adapter.sample(monotonic())
     finally:
         adapter.release()

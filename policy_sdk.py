@@ -3,11 +3,10 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from threading import Event, Lock, Thread
-from time import monotonic, time_ns
+from time import monotonic, monotonic_ns, time_ns
 from typing import Protocol
 
 import numpy as np
-
 from tron2_deploy.policy_observation import PolicyInputError, SdkState, Vector
 from tron2_deploy.policy_targets import JointTargets
 
@@ -84,8 +83,13 @@ class SdkAdapter:
         self.watchdog.start()
 
     def _valid_stamp(self, stamp: int, previous: int) -> bool:
-        if stamp <= previous or abs(time_ns() - stamp) > 250_000_000:
-            self.fault = "SDK source timestamp stale, regressing, or not Unix nanoseconds"
+        if not isinstance(stamp, int) or stamp <= 0:
+            self.fault = "SDK source timestamp must be positive integer nanoseconds"
+            return False
+        if stamp == previous:
+            return False
+        if stamp < previous or min(abs(time_ns() - stamp), abs(monotonic_ns() - stamp)) > 250_000_000:
+            self.fault = "SDK source timestamp stale, regressing, or outside local Unix/monotonic nanoseconds"
             return False
         return True
 
