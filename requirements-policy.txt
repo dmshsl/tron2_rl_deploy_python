@@ -1,0 +1,6 @@
+numpy>=1.24,<3
+scipy>=1.10,<2
+PyYAML>=5.4,<7
+pydantic>=2,<3
+onnxruntime>=1.17,<2
+typing_extensions>=4.4

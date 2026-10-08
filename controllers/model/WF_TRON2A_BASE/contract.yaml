@@ -1,0 +1,384 @@
+schema_version: 1
+policy: base
+source_task: Isaac-Limx-WF-TRON2A-V23
+fixture_sha256: 00cd2e2818022c985c4484d35ab7f4dde67ef2194da607d0240117837a8be02d
+source_code_sha256:
+  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/cfg/WF_TRON2A/kiro_v21_mdp.py: 2a7a3e1ac3e3569f87d2d9d99ef23ea703d0562b15e501f6d8337df59141f2f3
+  tron2_deploy/controllers/model/WF_TRON2A/params.yaml: 6ef76b28d28055686a3dd0670cd5698cb87a58636e84871c4fd34606239e328d
+joints:
+  sdk_names:
+  - proximal_pitch_L_Joint
+  - proximal_roll_L_Joint
+  - proximal_yaw_L_Joint
+  - knee_L_Joint
+  - wheel_L_Joint
+  - proximal_pitch_R_Joint
+  - proximal_roll_R_Joint
+  - proximal_yaw_R_Joint
+  - knee_R_Joint
+  - wheel_R_Joint
+  isaac_names:
+  - proximal_pitch_L_Joint
+  - proximal_pitch_R_Joint
+  - proximal_roll_L_Joint
+  - proximal_roll_R_Joint
+  - proximal_yaw_L_Joint
+  - proximal_yaw_R_Joint
+  - knee_L_Joint
+  - knee_R_Joint
+  - wheel_L_Joint
+  - wheel_R_Joint
+  sdk_to_isaac:
+  - 0
+  - 5
+  - 1
+  - 6
+  - 2
+  - 7
+  - 3
+  - 8
+  - 4
+  - 9
+  isaac_to_sdk:
+  - 0
+  - 2
+  - 4
+  - 6
+  - 8
+  - 1
+  - 3
+  - 5
+  - 7
+  - 9
+  action_names:
+  - proximal_pitch_L_Joint
+  - proximal_roll_L_Joint
+  - proximal_yaw_L_Joint
+  - knee_L_Joint
+  - wheel_L_Joint
+  - proximal_pitch_R_Joint
+  - proximal_roll_R_Joint
+  - proximal_yaw_R_Joint
+  - knee_R_Joint
+  - wheel_R_Joint
+  action_to_sdk:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+  default_position:
+  - 0.9
+  - 0.0
+  - 0.0
+  - -1.8
+  - 0.0
+  - 0.9
+  - 0.0
+  - 0.0
+  - -1.8
+  - 0.0
+  default_velocity:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  action_scale:
+  - 0.6
+  - 0.3
+  - 0.3
+  - 0.7
+  - 1.0
+  - 0.6
+  - 0.3
+  - 0.3
+  - 0.7
+  - 1.0
+  action_offset:
+  - 0.9
+  - 0.0
+  - 0.0
+  - -1.8
+  - 0.0
+  - 0.9
+  - 0.0
+  - 0.0
+  - -1.8
+  - 0.0
+  action_clip:
+  - null
+  - null
+  - null
+  - null
+  - null
+  - null
+  - null
+  - null
+  - null
+  - null
+  position_indices:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 5
+  - 6
+  - 7
+  - 8
+  wheel_indices:
+  - 4
+  - 9
+  use_default_offset:
+  - true
+  - true
+  - true
+  - true
+  - true
+  - true
+  - true
+  - true
+  - true
+  - true
+control:
+  physics_dt: 0.005
+  decimation: 4
+  policy_dt: 0.02
+  publish_dt: 0.002
+  kp:
+  - 159.67
+  - 159.67
+  - 53.22
+  - 159.67
+  - 0.0
+  - 159.67
+  - 159.67
+  - 53.22
+  - 159.67
+  - 0.0
+  kd:
+  - 10.16
+  - 10.16
+  - 3.39
+  - 10.16
+  - 0.6
+  - 10.16
+  - 10.16
+  - 3.39
+  - 10.16
+  - 0.6
+  torque_limit:
+  - 140.0
+  - 140.0
+  - 40.0
+  - 140.0
+  - 22.0
+  - 140.0
+  - 140.0
+  - 40.0
+  - 140.0
+  - 22.0
+  training_torque_limit:
+  - 140.0
+  - 140.0
+  - 40.0
+  - 140.0
+  - 20.0
+  - 140.0
+  - 140.0
+  - 40.0
+  - 140.0
+  - 20.0
+  power_on_seconds: 3.0
+  initial_gain_fraction: 0.2
+policy_terms:
+- name: base_ang_vel
+  func: isaaclab.envs.mdp.observations.base_ang_vel
+  size: 3
+  scale: 0.25
+  clip: null
+  sdk_indices: []
+- name: proj_gravity
+  func: isaaclab.envs.mdp.observations.projected_gravity
+  size: 3
+  scale: 1.0
+  clip: null
+  sdk_indices: []
+- name: joint_pos
+  func: isaaclab.envs.mdp.observations.joint_pos_rel
+  size: 8
+  scale: 1.0
+  clip: null
+  sdk_indices:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 5
+  - 6
+  - 7
+  - 8
+- name: joint_vel
+  func: isaaclab.envs.mdp.observations.joint_vel_rel
+  size: 10
+  scale: 0.05
+  clip: null
+  sdk_indices:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+- name: last_action
+  func: isaaclab.envs.mdp.observations.last_action
+  size: 10
+  scale: null
+  clip: null
+  sdk_indices: []
+- name: vel_error_ema
+  func: bipedal_locomotion.tasks.locomotion.cfg.WF_TRON2A.kiro_v21_mdp.vel_error_ema
+  size: 2
+  scale: null
+  clip: null
+  sdk_indices:
+  - 4
+  - 9
+- name: height_scan
+  func: bipedal_locomotion.tasks.locomotion.cfg.WF_TRON2A.kiro_v21_mdp.height_scan_corrupted
+  size: 231
+  scale: 1.0
+  clip:
+  - -1.0
+  - 1.0
+  sdk_indices: []
+history_terms:
+- name: base_ang_vel
+  func: isaaclab.envs.mdp.observations.base_ang_vel
+  size: 3
+  scale: 0.25
+  clip: null
+  sdk_indices: []
+- name: proj_gravity
+  func: isaaclab.envs.mdp.observations.projected_gravity
+  size: 3
+  scale: 1.0
+  clip: null
+  sdk_indices: []
+- name: joint_pos
+  func: isaaclab.envs.mdp.observations.joint_pos_rel
+  size: 8
+  scale: 1.0
+  clip: null
+  sdk_indices:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 5
+  - 6
+  - 7
+  - 8
+- name: joint_vel
+  func: isaaclab.envs.mdp.observations.joint_vel_rel
+  size: 10
+  scale: 0.05
+  clip: null
+  sdk_indices:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  - 5
+  - 6
+  - 7
+  - 8
+  - 9
+- name: last_action
+  func: isaaclab.envs.mdp.observations.last_action
+  size: 10
+  scale: null
+  clip: null
+  sdk_indices: []
+- name: vel_error_ema
+  func: bipedal_locomotion.tasks.locomotion.cfg.WF_TRON2A.kiro_v21_mdp.vel_error_ema
+  size: 2
+  scale: null
+  clip: null
+  sdk_indices:
+  - 4
+  - 9
+command_terms:
+- name: velocity_commands
+  func: bipedal_locomotion.tasks.locomotion.mdp.observations.generated_commands
+  size: 3
+  scale: null
+  clip: null
+  sdk_indices: []
+command_ranges:
+- - -1.0
+  - 1.0
+- - 0.0
+  - 0.0
+- - -1.0
+  - 1.0
+history_length: 10
+history_frame_size: 36
+actor_size: 273
+encoder_input_size: 360
+encoder_output_size: 3
+ema:
+  alpha: 0.02
+  wheel_radius: 0.1
+  wheel_spin_sign: 1.0
+  deadband: null
+  definition: EMA(mean(wheel_dq * spin_sign) * radius - vx_command, base_gyro_z -
+    wz_command); actor has NO deadband
+imu:
+  quaternion_order: wxyz
+  imu_to_base_rpy:
+  - 0.0
+  - 0.0
+  - 0.0
+  calibration: UNVERIFIED
+scan:
+  resolution: 0.1
+  size:
+  - 2.0
+  - 1.0
+  shape:
+  - 21
+  - 11
+  ordering: xy
+  alignment: yaw
+  offset: 0.8
+  clip:
+  - -1.0
+  - 1.0
+  count: 231
+alignment_notes:
+- Power-on 3.0 seconds and gain ramp 0.2 to 1.0 are deployment safety requirements,
+  not training values.
+- Vendor publish rate retained; inference period follows training sim.dt * decimation.
+- Vendor torque limits retained in separate post-step; training limits recorded for
+  alignment audit.
+- Training observation noise and action latency randomization are not injected on
+  hardware.
+- Commands are physical vx, vy, wz; generated_commands returns them unchanged. Sampling
+  ranges are not observation clipping.
+- IMU-to-base rotation remains UNVERIFIED until hardware calibration.
