@@ -56,6 +56,7 @@ class PolicyWheelfootController:
         self.last_policy_time = -np.inf
         self.targets: JointTargets | None = None
         self.actor_input = np.zeros(contract.actor_size, dtype=np.float32)
+        self.last_scan: Vector | None = None
 
     def prepare(self, state: SdkState) -> None:
         self.enabled = True
@@ -64,6 +65,7 @@ class PolicyWheelfootController:
         self.mem = PolicyMemory.empty(self.contract)
         self.last_policy_time = -np.inf
         self.targets = None
+        self.last_scan = None
 
     def stop(self) -> None:
         self.enabled = False
@@ -71,6 +73,7 @@ class PolicyWheelfootController:
         self.hold_pose = None
         self.mem = PolicyMemory.empty(self.contract)
         self.targets = None
+        self.last_scan = None
 
     def step(self, state: SdkState, commands: Vector) -> JointTargets:
         if not self.enabled:
@@ -85,6 +88,7 @@ class PolicyWheelfootController:
             return torque_preclip(power_on_targets(self.hold_pose, elapsed, self.contract), state, self.contract)
         if state.timestamp - self.last_policy_time >= self.contract.control.policy_dt - 1e-9:
             scan = None if self.height_provider is None else self.height_provider.get_scan(state)
+            self.last_scan = scan
             actor, history = build_actor_input(state, self.mem, scan, commands, self.contract)
             latent = finite_vector(self.encoder.run(None, {self.encoder.get_inputs()[0].name: history})[0],
                                    self.contract.encoder_output_size)

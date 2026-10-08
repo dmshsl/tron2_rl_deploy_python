@@ -257,3 +257,32 @@ def test_controller_when_stopped_remains_zero_gain_until_prepared(contract, stat
         targets = controller.step(replace(state, timestamp=t), np.zeros(3))
         np.testing.assert_array_equal(targets.kp, np.zeros(10))
         np.testing.assert_array_equal(targets.kd, np.zeros(10))
+
+
+def test_last_scan_tracked_on_policy_tick_and_reset_on_prepare_stop():
+    from PolicyWheelfootController import PolicyWheelfootController
+
+    from tron2_deploy.policy_contract import load_contract
+    # Given a Base controller wired to a height provider with a known scan.
+    base_contract = load_contract(ROOT / "tron2_deploy/controllers/model/WF_TRON2A_BASE/contract.yaml")
+    known_scan = np.linspace(-1., 1., 231, dtype=np.float32)
+    controller = PolicyWheelfootController(
+        ROOT / "tron2_deploy/controllers/model/WF_TRON2A_BASE", base_contract,
+        SimpleNamespace(get_scan=lambda state: known_scan))
+    from tron2_deploy.policy_observation import SdkState
+    state = SdkState(np.array(base_contract.joints.default_position), np.zeros(10),
+                     np.array([1., 0., 0., 0.]), np.zeros(3), 0.)
+    controller.prepare(state)
+    # Then before any policy tick (still in the 3s power-on hold), no scan is recorded yet.
+    assert controller.last_scan is None
+    controller.step(state, np.zeros(3))
+    assert controller.last_scan is None
+    # When a policy tick runs (past power-on), then the exact provider scan is recorded.
+    post_power_on = replace(state, timestamp=base_contract.control.power_on_seconds + .001)
+    controller.step(post_power_on, np.zeros(3))
+    np.testing.assert_array_equal(controller.last_scan, known_scan)
+    # When stopped or re-prepared, then the stale scan is cleared, not carried over.
+    controller.stop()
+    assert controller.last_scan is None
+    controller.prepare(state)
+    assert controller.last_scan is None

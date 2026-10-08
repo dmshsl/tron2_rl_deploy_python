@@ -125,9 +125,12 @@ def main() -> int:
             if args.csv:
                 stream = stack.enter_context(args.csv.open("w", newline=""))
                 writer = csv.writer(stream)
-                writer.writerow(["t", "policy_t", "vx", "vy", "wz"] +
-                                [f"{prefix}_{i}" for prefix, count in (("q", 10), ("dq", 10), ("quat", 4),
-                                 ("gyro", 3), ("action", 10), ("target_q", 10), ("target_dq", 10)) for i in range(count)])
+                header = ["t", "policy_t", "vx", "vy", "wz"] + [
+                    f"{prefix}_{i}" for prefix, count in (("q", 10), ("dq", 10), ("quat", 4),
+                    ("gyro", 3), ("action", 10), ("target_q", 10), ("target_dq", 10)) for i in range(count)]
+                if provider is not None:
+                    header += [f"scan_{i}" for i in range(contract.scan.count)]
+                writer.writerow(header)
             begin = monotonic()
             next_tick, last_prepare = begin, False
             autostart = args.autostart
@@ -152,8 +155,12 @@ def main() -> int:
                 targets = controller.step(state, commands)
                 adapter.publish(targets)
                 if writer is not None:
-                    writer.writerow([now - begin, policy_time, *commands, *state.q, *state.dq, *state.quat,
-                                     *state.gyro, *controller.mem.last_action, *targets.q, *targets.dq])
+                    row = [now - begin, policy_time, *commands, *state.q, *state.dq, *state.quat,
+                          *state.gyro, *controller.mem.last_action, *targets.q, *targets.dq]
+                    if provider is not None:
+                        row += (list(controller.last_scan) if controller.last_scan is not None
+                               else [float("nan")] * contract.scan.count)
+                    writer.writerow(row)
                 next_tick += contract.control.publish_dt
                 delay = next_tick - monotonic()
                 if delay > 0:
