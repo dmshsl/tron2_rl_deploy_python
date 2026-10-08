@@ -1,0 +1,2 @@
+controllers/model/WF_TRON2A_BASE/*.onnx binary
+controllers/model/WF_TRON2A_BASE_BLIND/*.onnx binary
