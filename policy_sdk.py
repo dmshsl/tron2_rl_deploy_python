@@ -1,5 +1,7 @@
 """SDK callback adapter with copied samples, startup gates, and a stale-data watchdog."""
 
+import os
+import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from threading import Event, Lock, Thread
@@ -144,8 +146,13 @@ class SdkAdapter:
         while not self.closed.wait(0.05):
             now = self.clock()
             startup_expired = self.last_publish is None and now > self.startup_deadline
-            if startup_expired or self.tripped.is_set() or (self.last_publish is not None and (self.fault or
-                    now - min(self.last_publish, self.state_time, self.imu_time) > 0.25)):
+            stale = self.last_publish is not None and now - min(self.last_publish, self.state_time, self.imu_time) > 0.25
+            if startup_expired or self.tripped.is_set() or (self.last_publish is not None and (self.fault or stale)):
+                if os.environ.get("TRON2_SDK_WATCHDOG_DEBUG") and not self.tripped.is_set():
+                    print(f"WATCHDOG_TRIP startup_expired={startup_expired} fault={self.fault!r} "
+                          f"publish_age={None if self.last_publish is None else now - self.last_publish:.4f} "
+                          f"state_age={now - self.state_time:.4f} imu_age={now - self.imu_time:.4f}",
+                          file=sys.stderr, flush=True)
                 self.tripped.set()
                 self.robot.publishRobotCmd(self.emergency)
 
