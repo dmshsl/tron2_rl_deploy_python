@@ -100,7 +100,16 @@ def test_zero_default_pose_contract_fails_on_joint_pos(tmp_path: Path) -> None:
     broken = contract.model_copy(update={"joints": broken_joints})
     copy = tmp_path / "zero-pose.yaml"
     copy.write_text(broken.model_dump_json())
-    environment = dict(os.environ, TRON2_PARITY_CONTRACT=str(copy))
+    # `tron2_deploy` is a namespace package: importing it needs its parent
+    # directory (the superproject root) on sys.path, which is only true by
+    # accident when the OUTER pytest happens to be invoked from there. Pin
+    # it explicitly via PYTHONPATH so this subprocess resolves the import
+    # regardless of the outer invocation's current working directory.
+    superproject_root = Path(__file__).resolve().parents[2]
+    existing_pythonpath = os.environ.get("PYTHONPATH", "")
+    pythonpath = str(superproject_root) if not existing_pythonpath else \
+        f"{superproject_root}{os.pathsep}{existing_pythonpath}"
+    environment = dict(os.environ, TRON2_PARITY_CONTRACT=str(copy), PYTHONPATH=pythonpath)
     # When: rerun the actual replay test against the temporary contract.
     result = subprocess.run([sys.executable, "-m", "pytest", str(Path(__file__).resolve()),
                              "-q", "-k", "base_flat", "--tb=short"],

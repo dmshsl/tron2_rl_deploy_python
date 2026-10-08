@@ -3,7 +3,7 @@ policy: base
 source_task: Isaac-Limx-WF-TRON2A-V23
 fixture_sha256: 00cd2e2818022c985c4484d35ab7f4dde67ef2194da607d0240117837a8be02d
 source_code_sha256:
-  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/cfg/WF_TRON2A/kiro_v21_mdp.py: 2a7a3e1ac3e3569f87d2d9d99ef23ea703d0562b15e501f6d8337df59141f2f3
+  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/cfg/WF_TRON2A/kiro_v21_mdp.py: 12e365fe2596d76a878fb50b12be039d44fa3b452a8bea793ee53de9e4b11e04
   tron2_deploy/controllers/model/WF_TRON2A/params.yaml: 6ef76b28d28055686a3dd0670cd5698cb87a58636e84871c4fd34606239e328d
 joints:
   sdk_names:
