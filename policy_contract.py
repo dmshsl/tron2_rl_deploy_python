@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class FrozenModel(BaseModel):
@@ -67,6 +67,15 @@ class EmaContract(FrozenModel):
     definition: str
 
 
+class SafetyContract(FrozenModel):
+    velocity_limit: tuple[float, ...]
+    hard_position_limits: tuple[tuple[float, float], ...]
+    soft_position_limits: tuple[tuple[float, float], ...]
+    wheel_overspeed_factor: float = Field(gt=1)
+    tilt_limit: float = Field(gt=0, lt=3.141592653589793)
+    watchdog_seconds: float = Field(gt=0)
+
+
 class ImuContract(FrozenModel):
     quaternion_order: Literal["wxyz"] = "wxyz"
     imu_to_base_rpy: tuple[float, float, float]
@@ -92,6 +101,7 @@ class DeploymentContract(FrozenModel):
     source_code_sha256: dict[str, str]
     joints: JointContract
     control: ControlContract
+    safety: SafetyContract
     policy_terms: tuple[ObservationTerm, ...]
     history_terms: tuple[ObservationTerm, ...]
     command_terms: tuple[ObservationTerm, ...]
@@ -119,7 +129,8 @@ class DeploymentContract(FrozenModel):
                        self.joints.action_scale, self.joints.action_offset,
                        self.joints.action_clip, self.joints.use_default_offset,
                        self.control.kp, self.control.kd, self.control.torque_limit,
-                       self.control.training_torque_limit):
+                       self.control.training_torque_limit, self.safety.velocity_limit,
+                       self.safety.hard_position_limits, self.safety.soft_position_limits):
             if len(values) != n:
                 raise ValueError("per-joint contract arrays must match SDK joint count")
         if [self.joints.sdk_names[i] for i in self.joints.sdk_to_isaac] != list(self.joints.isaac_names):
@@ -132,6 +143,11 @@ class DeploymentContract(FrozenModel):
             raise ValueError("position and wheel indices must partition joints")
         if self.history_length * self.history_frame_size != self.encoder_input_size:
             raise ValueError("encoder history dimensions disagree")
+        if min(self.safety.velocity_limit) <= 0 or any(
+            not hard[0] <= soft[0] < soft[1] <= hard[1]
+            for hard, soft in zip(self.safety.hard_position_limits, self.safety.soft_position_limits, strict=True)
+        ):
+            raise ValueError("invalid safety velocity or position limits")
         if sum(t.size for t in self.policy_terms + self.command_terms) + self.encoder_output_size != self.actor_size:
             raise ValueError("actor dimensions disagree")
         if sum(t.size for t in self.history_terms) != self.history_frame_size:

@@ -3,8 +3,9 @@ policy: base_blind
 source_task: Isaac-Limx-WF-TRON2A-V22
 fixture_sha256: dda50fc688e83227f9648d3d9c3b419a8e4d63226ec3fa6fdb6dcd9b9a2a5d4a
 source_code_sha256:
-  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/cfg/WF_TRON2A/kiro_v21_mdp.py: 12e365fe2596d76a878fb50b12be039d44fa3b452a8bea793ee53de9e4b11e04
+  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/cfg/WF_TRON2A/kiro_v21_mdp.py: 5c693d5c3134fbd83c9b26a48c7b831c1b7c65ff0a9d27e3cdec14feac960738
   tron2_deploy/controllers/model/WF_TRON2A/params.yaml: 6ef76b28d28055686a3dd0670cd5698cb87a58636e84871c4fd34606239e328d
+  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/assets/usd/WF_TRON2A/urdf/robot_rl.urdf: 92f5104a6648c95775953c8e0136e0edd857765d8d177a6ef74921befe0a6503
 joints:
   sdk_names:
   - proximal_pitch_L_Joint
@@ -182,12 +183,12 @@ control:
   - 140.0
   - 40.0
   - 140.0
-  - 22.0
+  - 20.0
   - 140.0
   - 140.0
   - 40.0
   - 140.0
-  - 22.0
+  - 20.0
   training_torque_limit:
   - 140.0
   - 140.0
@@ -201,6 +202,63 @@ control:
   - 20.0
   power_on_seconds: 3.0
   initial_gain_fraction: 0.2
+safety:
+  velocity_limit:
+  - 12.57
+  - 12.57
+  - 14.66
+  - 12.57
+  - 40.0
+  - 12.57
+  - 12.57
+  - 14.66
+  - 12.57
+  - 40.0
+  hard_position_limits:
+  - - -3.141592653589793
+    - 2.600540585471551
+  - - -0.2617993877991494
+    - 3.19395248
+  - - -3.6651914291880923
+    - 1.4835298641951802
+  - - -2.6179938779914944
+    - 0.2617993877991494
+  - - -1745329.2519943293
+    - 1745329.2519943293
+  - - -3.141592653589793
+    - 2.600540585471551
+  - - -3.19395248
+    - 0.2617993877991494
+  - - -1.4835298641951802
+    - 3.6651914291880923
+  - - -2.6179938779914944
+    - 0.2617993877991494
+  - - -1745329.2519943293
+    - 1745329.2519943293
+  soft_position_limits:
+  - - -2.854485991636726
+    - 2.3134339235184838
+  - - -0.08901179440919216
+    - 3.021164886610043
+  - - -3.4077553645189287
+    - 1.2260937995260166
+  - - -2.4740042147019623
+    - 0.11780972450961746
+  - - -1570796.3267948963
+    - 1570796.3267948963
+  - - -2.854485991636726
+    - 2.3134339235184838
+  - - -3.021164886610043
+    - 0.08901179440919216
+  - - -1.2260937995260166
+    - 3.4077553645189287
+  - - -2.4740042147019623
+    - 0.11780972450961746
+  - - -1570796.3267948963
+    - 1570796.3267948963
+  wheel_overspeed_factor: 1.2
+  tilt_limit: 1.0
+  watchdog_seconds: 0.25
 policy_terms:
 - name: base_ang_vel
   func: isaaclab.envs.mdp.observations.base_ang_vel
@@ -367,8 +425,10 @@ alignment_notes:
 - Power-on 3.0 seconds and gain ramp 0.2 to 1.0 are deployment safety requirements,
   not training values.
 - Vendor publish rate retained; inference period follows training sim.dt * decimation.
-- Vendor torque limits retained in separate post-step; training limits recorded for
-  alignment audit.
+- Wheel torque/velocity limits use training actuators; leg torque limits retain vendor
+  values.
+- Target position bounds shrink URDF ranges about their midpoint by the training soft-limit
+  factor; actor/history are unchanged.
 - Training observation noise and action latency randomization are not injected on
   hardware.
 - Commands are physical vx, vy, wz; generated_commands returns them unchanged. Sampling
