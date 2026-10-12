@@ -45,6 +45,9 @@ def power_on_targets(measured_pose: Vector, elapsed: float, contract: Deployment
 
 def torque_preclip(targets: JointTargets, state: SdkState, contract: DeploymentContract) -> JointTargets:
     """Bound PD torque by adjusting targets; never change actor action/history."""
+    for value in (targets.q, targets.dq, targets.kp, targets.kd):
+        finite_vector(value, len(contract.joints.sdk_names))
+    targets = clamp_targets(targets, contract)
     limit = np.asarray(contract.control.torque_limit, dtype=np.float32)
     torque = targets.kp * (targets.q - state.q) + targets.kd * (targets.dq - state.dq)
     bounded = np.clip(torque, -limit, limit)
@@ -53,4 +56,15 @@ def torque_preclip(targets: JointTargets, state: SdkState, contract: DeploymentC
     velocity = (~position) & (targets.kd > 0)
     q[position] = state.q[position] + (bounded[position] - targets.kd[position] * (dq[position] - state.dq[position])) / targets.kp[position]
     dq[velocity] = state.dq[velocity] + bounded[velocity] / targets.kd[velocity]
+    return clamp_targets(JointTargets(q, dq, targets.kp, targets.kd), contract)
+
+
+def clamp_targets(targets: JointTargets, contract: DeploymentContract) -> JointTargets:
+    """Apply command bounds after torque adjustment too, without touching actor outputs."""
+    q, dq = targets.q.copy(), targets.dq.copy()
+    positions, wheels = list(contract.joints.position_indices), list(contract.joints.wheel_indices)
+    limits = np.asarray(contract.safety.soft_position_limits, dtype=np.float32)
+    velocity = np.asarray(contract.safety.velocity_limit, dtype=np.float32)
+    q[positions] = np.clip(q[positions], limits[positions, 0], limits[positions, 1])
+    dq[wheels] = np.clip(dq[wheels], -velocity[wheels], velocity[wheels])
     return JointTargets(q, dq, targets.kp, targets.kd)

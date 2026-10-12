@@ -22,6 +22,7 @@ from tron2_deploy.policy_observation import (
     finite_vector,
     velocity_error,
 )
+from tron2_deploy.policy_safety import SafetyMonitor
 from tron2_deploy.policy_targets import (
     JointTargets,
     action_targets,
@@ -36,6 +37,7 @@ class PolicyWheelfootController:
     def __init__(self, model_dir: Path, contract: DeploymentContract,
                  height_provider: HeightScanProvider | None = None) -> None:
         self.contract = contract
+        self.safety = SafetyMonitor(contract)
         self.height_provider = height_provider
         options = ort.SessionOptions()
         options.intra_op_num_threads = options.inter_op_num_threads = 1
@@ -59,6 +61,8 @@ class PolicyWheelfootController:
         self.last_scan: Vector | None = None
 
     def prepare(self, state: SdkState) -> None:
+        if self.safety.reason:
+            return
         self.enabled = True
         self.started_at = state.timestamp
         self.hold_pose = state.q.copy()
@@ -76,6 +80,22 @@ class PolicyWheelfootController:
         self.last_scan = None
 
     def step(self, state: SdkState, commands: Vector) -> JointTargets:
+        if self.safety.reason:
+            return self.safety.damping()
+        self.safety.check_state(state)
+        if self.safety.reason:
+            return self.safety.damping()
+        try:
+            finite_vector(commands, 3)
+            targets = self._step(state, commands)
+            for value in (targets.q, targets.dq, targets.kp, targets.kd):
+                finite_vector(value, len(self.contract.joints.sdk_names))
+            return targets
+        except PolicyInputError as error:
+            self.safety.trip(str(error))
+            return self.safety.damping()
+
+    def _step(self, state: SdkState, commands: Vector) -> JointTargets:
         if not self.enabled:
             zero = np.zeros_like(state.q)
             return JointTargets(state.q.copy(), zero, zero.copy(), zero.copy())
