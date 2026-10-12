@@ -115,11 +115,11 @@ def main() -> int:
     robot = Robot(RobotType.Tron2)
     if not robot.init(args.robot_ip):
         raise PolicyInputError("SDK localhost initialization failed")
-    adapter = SdkAdapter(robot, datatypes.RobotCmd)
+    adapter = SdkAdapter(robot, datatypes.RobotCmd, controller.safety)
     try:
         deadline = monotonic() + min(5., args.timeout)
         if not adapter.ready_state.wait(max(0., deadline - monotonic())) or not adapter.ready_imu.wait(max(0., deadline - monotonic())):
-            raise PolicyInputError("no SDK state and IMU within startup timeout")
+            controller.safety.trip("no SDK state and IMU within startup timeout")
         with ExitStack() as stack:
             writer = None
             if args.csv:
@@ -136,7 +136,14 @@ def main() -> int:
             autostart = args.autostart
             while monotonic() - begin < args.timeout:
                 now = monotonic()
-                state, joy = adapter.sample(now)
+                try:
+                    state, joy = adapter.sample(now)
+                except PolicyInputError as error:
+                    controller.safety.trip(str(error))
+                    adapter.publish(controller.safety.damping())
+                    sleep(contract.control.publish_dt)
+                    next_tick = monotonic()
+                    continue
                 if joy.stop:
                     controller.stop()
                     autostart = False

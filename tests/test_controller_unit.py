@@ -213,10 +213,11 @@ def test_fake_sdk_when_inference_runs_preserves_wire_order(contract, state):
     from PolicyWheelfootController import PolicyWheelfootController
 
     from tron2_deploy.policy_observation import PolicyInputError
+    from tron2_deploy.policy_safety import SafetyMonitor
     from tron2_deploy.policy_sdk import SdkAdapter
     # Given actual ONNX models behind a fake SDK callback transport.
     robot = FakeRobot()
-    adapter = SdkAdapter(robot, SimpleNamespace)
+    adapter = SdkAdapter(robot, SimpleNamespace, SafetyMonitor(contract))
     robot.state_callback(SimpleNamespace(stamp=time_ns(), q=state.q, dq=state.dq))
     robot.imu_callback(SimpleNamespace(stamp=time_ns(), quat=state.quat, gyro=state.gyro))
     sampled, _ = adapter.sample(monotonic())

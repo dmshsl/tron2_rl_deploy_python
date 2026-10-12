@@ -9,7 +9,9 @@ from time import monotonic, monotonic_ns, time_ns
 from typing import Protocol
 
 import numpy as np
+
 from tron2_deploy.policy_observation import PolicyInputError, SdkState, Vector
+from tron2_deploy.policy_safety import SafetyMonitor
 from tron2_deploy.policy_targets import JointTargets
 
 
@@ -57,8 +59,9 @@ class JoyState:
 
 class SdkAdapter:
     def __init__(self, robot: RobotInterface, command_factory: Callable[[], CommandMessage],
-                 clock: Callable[[], float] = monotonic) -> None:
+                 safety: SafetyMonitor, *, clock: Callable[[], float] = monotonic) -> None:
         self.robot, self.command = robot, command_factory()
+        self.safety = safety
         self.emergency = command_factory()
         self.clock = clock
         self.lock = Lock()
@@ -78,6 +81,7 @@ class SdkAdapter:
             command.q, command.dq, command.tau = [0.] * 10, [0.] * 10, [0.] * 10
             command.Kp, command.Kd = [0.] * 10, [0.] * 10
             command.motor_names = [""] * 10
+        self.emergency.Kd = list(safety.contract.control.kd)
         robot.subscribeRobotState(self.on_state)
         robot.subscribeImuData(self.on_imu)
         robot.subscribeSensorJoy(self.on_joy)
@@ -90,7 +94,7 @@ class SdkAdapter:
             return False
         if stamp == previous:
             return False
-        if stamp < previous or min(abs(time_ns() - stamp), abs(monotonic_ns() - stamp)) > 250_000_000:
+        if stamp < previous or min(abs(time_ns() - stamp), abs(monotonic_ns() - stamp)) > self.safety.contract.safety.watchdog_seconds * 1e9:
             self.fault = "SDK source timestamp stale, regressing, or outside local Unix/monotonic nanoseconds"
             return False
         return True
@@ -127,37 +131,46 @@ class SdkAdapter:
         with self.lock:
             if self.fault or self.tripped.is_set():
                 raise PolicyInputError(self.fault or "output watchdog tripped; restart required")
-            if now - min(self.state_time, self.imu_time) > 0.25:
-                raise PolicyInputError("SDK state/IMU stale for more than 0.25 seconds")
+            if now - min(self.state_time, self.imu_time) > self.safety.contract.safety.watchdog_seconds:
+                raise PolicyInputError("SDK state/IMU stale beyond watchdog threshold")
             if abs(self.state_stamp - self.imu_stamp) > 50_000_000:
                 raise PolicyInputError("SDK state/IMU source timestamp skew exceeds 0.05 seconds")
             return SdkState(self.q, self.dq, self.quat, self.gyro, now), self.joy
 
     def publish(self, targets: JointTargets) -> None:
-        if self.tripped.is_set():
-            raise PolicyInputError("output watchdog tripped; restart required")
-        self.command.q, self.command.dq = targets.q.tolist(), targets.dq.tolist()
-        self.command.Kp, self.command.Kd = targets.kp.tolist(), targets.kd.tolist()
-        self.last_publish = self.clock()
-        self.robot.publishRobotCmd(self.command)
+        with self.lock:
+            if not all(np.isfinite(value).all() for value in (targets.q, targets.dq, targets.kp, targets.kd)):
+                self.safety.trip("non-finite SDK target")
+            self.last_publish = self.clock()
+            if self.safety.reason or self.tripped.is_set():
+                self.robot.publishRobotCmd(self.emergency)
+            else:
+                self.command.q, self.command.dq = targets.q.tolist(), targets.dq.tolist()
+                self.command.Kp, self.command.Kd = targets.kp.tolist(), targets.kd.tolist()
+                self.robot.publishRobotCmd(self.command)
 
     def _watchdog(self) -> None:
-        """Independent of inference/scan acquisition; use a separate immutable stop packet."""
+        """Independent of inference/scan acquisition; serialize damping with normal publish."""
         while not self.closed.wait(0.05):
-            now = self.clock()
-            startup_expired = self.last_publish is None and now > self.startup_deadline
-            stale = self.last_publish is not None and now - min(self.last_publish, self.state_time, self.imu_time) > 0.25
-            if startup_expired or self.tripped.is_set() or (self.last_publish is not None and (self.fault or stale)):
-                if os.environ.get("TRON2_SDK_WATCHDOG_DEBUG") and not self.tripped.is_set():
-                    print(f"WATCHDOG_TRIP startup_expired={startup_expired} fault={self.fault!r} "
-                          f"publish_age={None if self.last_publish is None else now - self.last_publish:.4f} "
-                          f"state_age={now - self.state_time:.4f} imu_age={now - self.imu_time:.4f}",
-                          file=sys.stderr, flush=True)
-                self.tripped.set()
-                self.robot.publishRobotCmd(self.emergency)
+            with self.lock:
+                now = self.clock()
+                startup_expired = self.last_publish is None and now > self.startup_deadline
+                stale = self.last_publish is not None and now - min(self.last_publish, self.state_time, self.imu_time) > self.safety.contract.safety.watchdog_seconds
+                if startup_expired or self.tripped.is_set() or self.safety.reason or (self.last_publish is not None and (self.fault or stale)):
+                    if os.environ.get("TRON2_SDK_WATCHDOG_DEBUG") and not self.tripped.is_set():
+                        print(f"WATCHDOG_TRIP startup_expired={startup_expired} fault={self.fault!r} "
+                              f"publish_age={None if self.last_publish is None else now - self.last_publish} "
+                              f"state_age={now - self.state_time:.4f} imu_age={now - self.imu_time:.4f}",
+                              file=sys.stderr, flush=True)
+                    self.safety.trip(self.fault or "SDK output watchdog tripped")
+                    self.tripped.set()
+                    self.robot.publishRobotCmd(self.emergency)
 
     def release(self) -> None:
-        """Send zero gains/torques on every exit, including invalid or stale sensors."""
+        """Preserve damping on fault exits; ordinary shutdown remains zero-gain."""
         self.closed.set()
-        self.robot.publishRobotCmd(self.emergency)
         self.watchdog.join(timeout=0.5)
+        with self.lock:
+            if not self.safety.reason:
+                self.emergency.Kd = [0.] * 10
+            self.robot.publishRobotCmd(self.emergency)
