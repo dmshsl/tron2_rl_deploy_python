@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Replace Base weights with user-approved Base-RealMap seed43 @26500; retain
+  FP64-internal ONNX arithmetic, the identical hardened deployment contract,
+  and byte-identical V22 BaseBlind artifacts. Retrain/perception failures remain
+  disclosed in MODEL_CARD.md; this is not hardware qualification.
+
 ### Added
 - Open-source scaffolding: `NOTICE`, `THIRD_PARTY_NOTICES.md`,
   `MODEL_CARD.md`, `SECURITY.md`, `CONTRIBUTING.md`, `CHANGELOG.md`.
