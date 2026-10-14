@@ -76,6 +76,30 @@ class SafetyContract(FrozenModel):
     watchdog_seconds: float = Field(gt=0)
 
 
+class StandupContract(FrozenModel):
+    """Scripted seated stand-up (todo 22); values are deployment safety settings, not training values.
+
+    tilt_limit replaces safety.tilt_limit only while the scripted reference runs: a seated
+    or rising body tilts far beyond the 1.0 rad locomotion threshold by design, and the latch
+    must stay armed rather than be disabled (DESIGN.md decision 9f). It equals the StandUp
+    environment's bad_orientation termination. Targets are clamped to the URDF hard limits
+    inset by position_margin (the reference's own 3 degree contract), not to the locomotion
+    soft limits, which exclude the rear-fold waypoints.
+    """
+
+    tilt_limit: float = Field(default=1.2, gt=0, lt=3.141592653589793)
+    speed_limit: float = Field(default=1.0, gt=0)
+    position_margin: float = Field(default=0.05235987755982988, ge=0)
+    torque_fraction: float = Field(default=0.8, gt=0, le=1)
+    wheel_kd: float | None = Field(default=None, ge=0)
+    handoff_tilt: float = Field(default=0.15, gt=0)
+    handoff_joint_speed: float = Field(default=0.5, gt=0)
+    hold_seconds: float = Field(default=0.5, gt=0)
+    zero_command_seconds: float = Field(default=0.5, ge=0)
+    certify_budget_seconds: float = Field(default=40.0, gt=0)
+    timeout_margin_seconds: float = Field(default=3.0, ge=0)
+
+
 class ImuContract(FrozenModel):
     quaternion_order: Literal["wxyz"] = "wxyz"
     imu_to_base_rpy: tuple[float, float, float]
@@ -115,6 +139,7 @@ class DeploymentContract(FrozenModel):
     imu: ImuContract
     scan: ScanContract
     alignment_notes: tuple[str, ...]
+    standup: StandupContract = StandupContract()
 
     @model_validator(mode="after")
     def check_layout(self) -> "DeploymentContract":
@@ -176,6 +201,8 @@ class DeploymentContract(FrozenModel):
             raise ValueError("physics timestep and decimation must be positive")
         if abs(self.control.policy_dt - self.control.physics_dt * self.control.decimation) > 1e-9:
             raise ValueError("policy period must match training physics decimation")
+        if self.standup.tilt_limit < self.safety.tilt_limit or self.standup.handoff_tilt > self.safety.tilt_limit:
+            raise ValueError("stand-up tilt threshold must bracket the locomotion tilt limit")
         return self
 
 

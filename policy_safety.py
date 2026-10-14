@@ -29,8 +29,10 @@ class SafetyMonitor:
         return JointTargets(zero, zero.copy(), zero.copy(),
                             np.asarray(self.contract.control.kd, dtype=np.float32))
 
-    def check_state(self, state: SdkState) -> None:
+    def check_state(self, state: SdkState, tilt_limit: float | None = None) -> None:
+        """tilt_limit overrides safety.tilt_limit for the scripted stand-up phases only."""
         safety = self.contract.safety
+        tilt_limit = safety.tilt_limit if tilt_limit is None else tilt_limit
         wheels = list(self.contract.joints.wheel_indices)
         speed = np.abs(state.dq[wheels])
         limit = np.asarray(safety.velocity_limit)[wheels] * safety.wheel_overspeed_factor
@@ -43,5 +45,5 @@ class SafetyMonitor:
         else:
             _, gravity = base_imu(state, self.contract)
             tilt = float(np.arccos(np.clip(-gravity[2], -1., 1.)))
-            if tilt > safety.tilt_limit:
-                self.trip(f"tilt {tilt:.6f} > {safety.tilt_limit} rad")
+            if tilt > tilt_limit:
+                self.trip(f"tilt {tilt:.6f} > {tilt_limit} rad")

@@ -442,3 +442,15 @@ alignment_notes:
 - Commands are physical vx, vy, wz; generated_commands returns them unchanged. Sampling
   ranges are not observation clipping.
 - IMU-to-base rotation remains UNVERIFIED until hardware calibration.
+standup:
+  tilt_limit: 1.2
+  speed_limit: 1.0
+  position_margin: 0.05235987755982988
+  torque_fraction: 0.8
+  wheel_kd: null
+  handoff_tilt: 0.15
+  handoff_joint_speed: 0.5
+  hold_seconds: 0.5
+  zero_command_seconds: 0.5
+  certify_budget_seconds: 40.0
+  timeout_margin_seconds: 3.0

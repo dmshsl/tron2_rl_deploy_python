@@ -83,6 +83,8 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=60.)
     parser.add_argument("--csv", type=Path)
     parser.add_argument("--height_scan", choices=("gt", "perception"), default="perception")
+    parser.add_argument("--standup", choices=("none", "scripted"), default="none",
+                        help="scripted: tron2_common P1-P4 reference from the measured seated pose, then handoff")
     parser.add_argument("--imu_offset_rpy", nargs=3, type=float)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -104,9 +106,11 @@ def main() -> int:
             parser.error("schedule velocity is outside the generated training command ranges")
     print(yaml.safe_dump(contract.model_dump(mode="json"), sort_keys=False), flush=True)
     provider = None if args.dry_run else height_provider(contract, args.height_scan)
-    controller = PolicyWheelfootController(model_dir, contract, provider)
+    controller = PolicyWheelfootController(model_dir, contract, provider, args.standup)
     if args.dry_run:
         print(f"DRY_RUN PASS actor={contract.actor_size} encoder={contract.encoder_input_size}; SDK not imported")
+        print(f"STANDUP mode={args.standup} tilt_limit={contract.standup.tilt_limit} "
+              f"speed_limit={contract.standup.speed_limit}")
         return 0
 
     from limxsdk import datatypes
@@ -130,6 +134,7 @@ def main() -> int:
                     ("gyro", 3), ("action", 10), ("target_q", 10), ("target_dq", 10)) for i in range(count)]
                 if provider is not None:
                     header += [f"scan_{i}" for i in range(contract.scan.count)]
+                header.append("standup_phase")
                 writer.writerow(header)
             begin = monotonic()
             next_tick, last_prepare = begin, False
@@ -167,6 +172,7 @@ def main() -> int:
                     if provider is not None:
                         row += (list(controller.last_scan) if controller.last_scan is not None
                                else [float("nan")] * contract.scan.count)
+                    row.append(controller.standup_phase)
                     writer.writerow(row)
                 next_tick += contract.control.publish_dt
                 delay = next_tick - monotonic()

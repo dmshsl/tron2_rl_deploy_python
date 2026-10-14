@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disclosed in MODEL_CARD.md; this is not hardware qualification.
 
 ### Added
+- `run_policy.py --standup scripted`: `PolicyWheelfootController` tracks the
+  shared `tron2_common` seated stand-up reference (P0 hold, P1-P3, scripted
+  P4) with PD, a 1.0 rad/s target slew, the reference's own 3 degree limit
+  clamp and a 0.8x torque pre-clip, then hands off to the Base/BaseBlind
+  policy (history pre-filled with the final measured state, zero EMA, 0.5 s
+  zero command). New `standup:` contract block (stand-up tilt threshold
+  1.2 rad while rising; the damping latch stays armed). Certification runs
+  on a worker thread with the phase clock paused at the end of P0; rejected
+  or over-budget starts trip the latch. Not a hardware qualification: in
+  MuJoCo the scripted P4 does not stand the robot (see tron2_rl
+  `standup/DESIGN.md` decision 9i) and limp-settled starts are rejected by
+  the reference.
 - Open-source scaffolding: `NOTICE`, `THIRD_PARTY_NOTICES.md`,
   `MODEL_CARD.md`, `SECURITY.md`, `CONTRIBUTING.md`, `CHANGELOG.md`.
 - GitHub CI workflow: `ruff` lint, `python -m py_compile` over every
