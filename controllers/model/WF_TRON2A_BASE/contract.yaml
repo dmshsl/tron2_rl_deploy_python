@@ -454,3 +454,4 @@ standup:
   zero_command_seconds: 0.5
   certify_budget_seconds: 40.0
   timeout_margin_seconds: 3.0
+  hard_limit_tolerance: 0.017453292519943295

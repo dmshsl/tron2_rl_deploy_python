@@ -1,5 +1,6 @@
 """Scripted stand-up mode: contract, speed cap, tilt threshold, rejection latch, handoff fill."""
 
+import json
 import subprocess
 import sys
 from dataclasses import replace
@@ -57,7 +58,8 @@ def test_contract_standup_block_defaults_and_shipped_values(contract):
 
 @pytest.mark.parametrize("field,value", [("tilt_limit", 0.9), ("tilt_limit", 3.2), ("speed_limit", 0.),
                                         ("handoff_tilt", 1.1), ("torque_fraction", 1.5),
-                                        ("certify_budget_seconds", -1.)])
+                                        ("certify_budget_seconds", -1.), ("hard_limit_tolerance", .1),
+                                        ("hard_limit_tolerance", -.01)])
 def test_contract_standup_invalid_rejects(contract, field, value):
     data = contract.model_dump(mode="json")
     data["standup"][field] = value
@@ -192,3 +194,119 @@ def test_cli_dry_run_reports_standup_mode():
                              "--dry-run", "--standup", "scripted"], text=True, capture_output=True, timeout=60, check=False)
     assert result.returncode == 0, result.stderr
     assert "STANDUP mode=scripted tilt_limit=1.2 speed_limit=1.0" in result.stdout
+
+
+def near_a(contract, timestamp=0., offset=(2., -3., 4., 6.)):
+    """Seated a few degrees off A' (the seated-route target); plans in a few seconds."""
+    q = np.zeros(10, dtype=np.float32)
+    q[list(contract.joints.position_indices)] = reference.A_PRIME + np.radians(list(offset) * 2)
+    return SdkState(q, np.zeros(10), UPRIGHT, np.zeros(3), timestamp)
+
+
+def test_stop_at_a_runs_p0_to_p3_then_holds_a_prime(contract):
+    controller = PolicyWheelfootController(MODELS / "WF_TRON2A_BASE_BLIND", contract, None, "scripted", "A")
+    state = near_a(contract)
+    controller.prepare(state)
+    positions = list(contract.joints.position_indices)
+    first = controller.step(state, np.zeros(3, dtype=np.float32))
+    np.testing.assert_allclose(first.q[positions], state.q[positions], atol=1e-6)  # no snap at enable
+    plan = controller.standup.certificate.result()
+    assert isinstance(plan, reference.Route)
+    previous, peak, phases = first.q.copy(), 0., set()
+    while state.timestamp < plan.duration + 3.:
+        targets = controller.step(state, np.zeros(3, dtype=np.float32))
+        assert not controller.safety.reason, controller.safety.reason
+        peak = max(peak, float(np.max(np.abs(targets.q[positions] - previous[positions])) / .002))
+        previous = targets.q.copy()
+        phases.add(controller.standup_phase)
+        state = SdkState(targets.q, np.zeros(10), UPRIGHT, np.zeros(3), state.timestamp + .002)
+    assert phases == {0, 1, 2, 3, 4}
+    assert peak <= contract.standup.speed_limit + 1e-3
+    np.testing.assert_allclose(state.q[positions], reference.A_PRIME, atol=1e-5)
+    assert not controller.standup.complete and controller.started_at is None  # held at A', no handoff
+
+
+def test_stop_at_a_rejected_start_latches_without_snapping(contract):
+    controller = PolicyWheelfootController(MODELS / "WF_TRON2A_BASE_BLIND", contract, None, "scripted", "A")
+    state = SdkState(np.zeros(10, dtype=np.float32), np.zeros(10), UPRIGHT, np.zeros(3), 0.)  # legs through the floor
+    controller.prepare(state)
+    assert isinstance(controller.standup.certificate.exception(timeout=120.), PolicyInputError)
+    for t in (0., .5, 1.5):
+        targets = controller.step(replace(state, timestamp=t), np.zeros(3, dtype=np.float32))
+    assert "seated route to A rejected" in controller.safety.reason
+    np.testing.assert_array_equal(targets.kp, 0.)
+
+
+def test_hard_limit_tolerance_only_while_standing_up(contract):
+    assert contract.standup.hard_limit_tolerance == pytest.approx(np.radians(1.))
+    hard = np.asarray(contract.safety.hard_position_limits)
+    for mode, beyond, latched in (("scripted", .5, False), ("scripted", 1.5, True), ("none", .5, True)):
+        controller = PolicyWheelfootController(MODELS / "WF_TRON2A_BASE_BLIND", contract, None, mode, "A")
+        state = near_a(contract)
+        q = state.q.copy()
+        q[1] = hard[1, 1] + np.radians(beyond)  # left roll resting just past its stop
+        controller.safety.check_state(replace(state, q=q), None,
+                                      contract.standup.hard_limit_tolerance if mode == "scripted" else 0.)
+        assert bool(controller.safety.reason) is latched, (mode, beyond)
+
+
+def test_cli_stop_at_a_dry_run_and_requires_scripted():
+    run = [sys.executable, str(ROOT / "tron2_deploy/run_policy.py"), "--policy", "base_blind", "--dry-run"]
+    result = subprocess.run(run + ["--standup", "scripted", "--standup-stop-at", "A"], text=True,
+                            capture_output=True, timeout=60, check=False)
+    assert result.returncode == 0 and "stop_at=A" in result.stdout, result.stderr
+    refused = subprocess.run(run + ["--standup-stop-at", "A"], text=True, capture_output=True, timeout=60, check=False)
+    assert refused.returncode == 2 and "requires --standup scripted" in refused.stderr
+
+
+def test_stop_at_a_planner_process_is_started_before_enable_and_reused(contract, monkeypatch):
+    from tron2_deploy import standup_mode
+
+    controller = PolicyWheelfootController(MODELS / "WF_TRON2A_BASE_BLIND", contract, None, "scripted", "A")
+    try:
+        planner = controller.planner
+        assert planner is not None and planner.warm.result(timeout=120.) is True  # worker alive before the SDK
+        spawned = []
+        monkeypatch.setattr(standup_mode, "RoutePlanner", lambda: spawned.append(1))
+        controller.prepare(near_a(contract))
+        assert spawned == [] and controller.standup.certificate.future is not planner.warm  # reused, not respawned
+        assert isinstance(controller.standup.certificate.result(), reference.Route)
+        assert controller.standup.route is None  # the route is adopted by the control loop, not the constructor
+        controller.step(near_a(contract), np.zeros(3, dtype=np.float32))
+        assert controller.standup.route is not None
+    finally:
+        controller.close()
+        controller.close()  # idempotent
+    assert controller.planner is None
+
+
+def test_planner_worker_initializer_tolerates_cpu_list(monkeypatch):
+    import os
+
+    from tron2_deploy.standup_mode import PLANNER_CPUS_ENV, _background
+
+    monkeypatch.setattr(os, "nice", lambda increment: 0)
+    applied = []
+    monkeypatch.setattr(os, "sched_setaffinity", lambda pid, cpus: applied.append(sorted(cpus)))
+    monkeypatch.setenv(PLANNER_CPUS_ENV, "0,1")
+    _background()
+    assert applied == [[0, 1]]
+    monkeypatch.setenv(PLANNER_CPUS_ENV, "not-a-cpu")
+    _background()  # malformed: keep the inherited affinity instead of failing the worker
+    assert applied == [[0, 1]]
+
+
+def test_route_info_is_logged_once_when_the_plan_arrives(contract, capsys):
+    controller = PolicyWheelfootController(MODELS / "WF_TRON2A_BASE_BLIND", contract, None, "scripted", "A")
+    try:
+        state = near_a(contract)
+        controller.prepare(state)
+        controller.standup.certificate.result()
+        for t in (0., .002, .004):
+            controller.step(replace(state, timestamp=t), np.zeros(3, dtype=np.float32))
+    finally:
+        controller.close()
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith("ROUTE_INFO ")]
+    assert len(lines) == 1
+    info = json.loads(lines[0].split("ROUTE_INFO ", 1)[1])
+    assert info["order"] in ("LR", "RL") and info["support_first_leg"] >= reference.REST_MIN and "prestep" in info

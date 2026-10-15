@@ -85,11 +85,15 @@ def main() -> int:
     parser.add_argument("--height_scan", choices=("gt", "perception"), default="perception")
     parser.add_argument("--standup", choices=("none", "scripted"), default="none",
                         help="scripted: tron2_common P1-P4 reference from the measured seated pose, then handoff")
+    parser.add_argument("--standup-stop-at", choices=("handoff", "A"), default="handoff",
+                        help="A: run only the seated route P0-P3 to pose A' and hold there (no P4, no handoff)")
     parser.add_argument("--imu_offset_rpy", nargs=3, type=float)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     if args.robot_ip != "127.0.0.1":
         parser.error("this execution scope forbids real-robot connections; use 127.0.0.1")
+    if args.standup_stop_at != "handoff" and args.standup != "scripted":
+        parser.error("--standup-stop-at requires --standup scripted")
     if not np.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("timeout must be positive and finite")
     model_dir = Path(__file__).resolve().parent / "controllers/model" / f"WF_TRON2A_{args.policy.upper()}"
@@ -106,11 +110,12 @@ def main() -> int:
             parser.error("schedule velocity is outside the generated training command ranges")
     print(yaml.safe_dump(contract.model_dump(mode="json"), sort_keys=False), flush=True)
     provider = None if args.dry_run else height_provider(contract, args.height_scan)
-    controller = PolicyWheelfootController(model_dir, contract, provider, args.standup)
+    controller = PolicyWheelfootController(model_dir, contract, provider, args.standup, args.standup_stop_at)
     if args.dry_run:
         print(f"DRY_RUN PASS actor={contract.actor_size} encoder={contract.encoder_input_size}; SDK not imported")
         print(f"STANDUP mode={args.standup} tilt_limit={contract.standup.tilt_limit} "
-              f"speed_limit={contract.standup.speed_limit}")
+              f"speed_limit={contract.standup.speed_limit} stop_at={args.standup_stop_at}")
+        controller.close()
         return 0
 
     from limxsdk import datatypes
@@ -137,6 +142,7 @@ def main() -> int:
                 header.append("standup_phase")
                 writer.writerow(header)
             begin = monotonic()
+            debug_timing = bool(os.environ.get("TRON2_SDK_WATCHDOG_DEBUG"))  # stalls >20 ms to stderr
             next_tick, last_prepare = begin, False
             autostart = args.autostart
             while monotonic() - begin < args.timeout:
@@ -165,7 +171,11 @@ def main() -> int:
                     axes = np.clip(joy.axes, -1., 1.)
                     commands = np.where(axes >= 0, axes * ranges[:, 1], -axes * ranges[:, 0])
                 targets = controller.step(state, commands)
+                stepped = monotonic()
                 adapter.publish(targets)
+                if debug_timing and monotonic() - now > .02:
+                    print(f"CTRL_LOOP_SLOW t={now - begin:.3f} step_ms={1e3 * (stepped - now):.1f} "
+                          f"publish_ms={1e3 * (monotonic() - stepped):.1f}", file=sys.stderr, flush=True)
                 if writer is not None:
                     row = [now - begin, policy_time, *commands, *state.q, *state.dq, *state.quat,
                           *state.gyro, *controller.mem.last_action, *targets.q, *targets.dq]
@@ -182,6 +192,7 @@ def main() -> int:
                     next_tick = monotonic()
     finally:
         adapter.release()
+        controller.close()
     return 0
 
 

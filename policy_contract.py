@@ -98,6 +98,9 @@ class StandupContract(FrozenModel):
     zero_command_seconds: float = Field(default=0.5, ge=0)
     certify_budget_seconds: float = Field(default=40.0, gt=0)
     timeout_margin_seconds: float = Field(default=3.0, ge=0)
+    # Limp legs come to rest on their mechanical stops; a reading this far past the URDF hard
+    # limit is still a resting leg, not an encoder fault (stand-up only; locomotion stays exact).
+    hard_limit_tolerance: float = Field(default=0.017453292519943295, ge=0, le=0.05235987755982988)
 
 
 class ImuContract(FrozenModel):

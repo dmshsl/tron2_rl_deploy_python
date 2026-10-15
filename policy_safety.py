@@ -29,8 +29,9 @@ class SafetyMonitor:
         return JointTargets(zero, zero.copy(), zero.copy(),
                             np.asarray(self.contract.control.kd, dtype=np.float32))
 
-    def check_state(self, state: SdkState, tilt_limit: float | None = None) -> None:
-        """tilt_limit overrides safety.tilt_limit for the scripted stand-up phases only."""
+    def check_state(self, state: SdkState, tilt_limit: float | None = None, position_tolerance: float = 0.) -> None:
+        """tilt_limit overrides safety.tilt_limit and position_tolerance widens the hard-limit
+        check, both for the scripted stand-up phases only (limp legs rest on their stops)."""
         safety = self.contract.safety
         tilt_limit = safety.tilt_limit if tilt_limit is None else tilt_limit
         wheels = list(self.contract.joints.wheel_indices)
@@ -40,7 +41,8 @@ class SafetyMonitor:
         hard = np.asarray(safety.hard_position_limits)[positions]
         if np.any(speed > limit):
             self.trip(f"wheel overspeed: |dq|={speed.tolist()} limits={limit.tolist()} rad/s")
-        elif np.any(state.q[positions] < hard[:, 0]) or np.any(state.q[positions] > hard[:, 1]):
+        elif (np.any(state.q[positions] < hard[:, 0] - position_tolerance)
+              or np.any(state.q[positions] > hard[:, 1] + position_tolerance)):
             self.trip("leg joint beyond hard position limit")
         else:
             _, gravity = base_imu(state, self.contract)

@@ -57,6 +57,16 @@ class JoyState:
     timestamp: float
 
 
+def _stall_counters() -> tuple[float, int]:
+    """(run-queue wait seconds, major page faults) of this process, for the debug stall attribution."""
+    try:
+        wait = int(open("/proc/self/schedstat").read().split()[1]) / 1e9
+        faults = int(open("/proc/self/stat").read().rsplit(")", 1)[1].split()[9])
+        return wait, faults
+    except (OSError, ValueError, IndexError):
+        return 0., 0
+
+
 class SdkAdapter:
     def __init__(self, robot: RobotInterface, command_factory: Callable[[], CommandMessage],
                  safety: SafetyMonitor, *, clock: Callable[[], float] = monotonic) -> None:
@@ -134,6 +144,10 @@ class SdkAdapter:
             if now - min(self.state_time, self.imu_time) > self.safety.contract.safety.watchdog_seconds:
                 raise PolicyInputError("SDK state/IMU stale beyond watchdog threshold")
             if abs(self.state_stamp - self.imu_stamp) > 50_000_000:
+                if os.environ.get("TRON2_SDK_WATCHDOG_DEBUG"):
+                    print(f"SKEW_TRIP state_minus_imu={(self.state_stamp - self.imu_stamp) / 1e9:.4f} "
+                          f"state_age={now - self.state_time:.4f} imu_age={now - self.imu_time:.4f}",
+                          file=sys.stderr, flush=True)
                 raise PolicyInputError("SDK state/IMU source timestamp skew exceeds 0.05 seconds")
             return SdkState(self.q, self.dq, self.quat, self.gyro, now), self.joy
 
@@ -147,11 +161,22 @@ class SdkAdapter:
             else:
                 self.command.q, self.command.dq = targets.q.tolist(), targets.dq.tolist()
                 self.command.Kp, self.command.Kd = targets.kp.tolist(), targets.kd.tolist()
+                started = self.clock()
                 self.robot.publishRobotCmd(self.command)
+                if os.environ.get("TRON2_SDK_WATCHDOG_DEBUG") and self.clock() - started > .02:
+                    print(f"SDK_PUBLISH_SLOW ms={1e3 * (self.clock() - started):.1f}", file=sys.stderr, flush=True)
 
     def _watchdog(self) -> None:
         """Independent of inference/scan acquisition; serialize damping with normal publish."""
+        debug = bool(os.environ.get("TRON2_SDK_WATCHDOG_DEBUG"))
+        previous = (self.clock(), *_stall_counters()) if debug else None
         while not self.closed.wait(0.05):
+            if previous is not None:  # attribute a stall of this whole process: run-queue wait vs page faults
+                sample = (self.clock(), *_stall_counters())
+                if sample[0] - previous[0] > .1:
+                    print(f"PROCESS_STALL gap={sample[0] - previous[0]:.3f}s runqueue_wait={sample[1] - previous[1]:.3f}s "
+                          f"majfaults={sample[2] - previous[2]} ", file=sys.stderr, flush=True)
+                previous = sample
             with self.lock:
                 now = self.clock()
                 startup_expired = self.last_publish is None and now > self.startup_deadline

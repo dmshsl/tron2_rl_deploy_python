@@ -30,7 +30,7 @@ from tron2_deploy.policy_targets import (
     power_on_targets,
     torque_preclip,
 )
-from tron2_deploy.standup_mode import ScriptedStandUp
+from tron2_deploy.standup_mode import RoutePlanner, ScriptedStandUp, StopAt
 
 StandupMode = Literal["none", "scripted"]
 
@@ -40,10 +40,13 @@ class PolicyWheelfootController:
 
     def __init__(self, model_dir: Path, contract: DeploymentContract,
                  height_provider: HeightScanProvider | None = None,
-                 standup: StandupMode = "none") -> None:
+                 standup: StandupMode = "none", standup_stop_at: StopAt = "handoff") -> None:
         self.contract = contract
         self.standup_mode: StandupMode = standup
+        self.standup_stop_at: StopAt = standup_stop_at
         self.standup: ScriptedStandUp | None = None
+        # The seated-route worker process is spawned here, before any SDK stream, not at enable.
+        self.planner: RoutePlanner | None = RoutePlanner() if standup == "scripted" and standup_stop_at == "A" else None
         self.safety = SafetyMonitor(contract)
         self.height_provider = height_provider
         options = ort.SessionOptions()
@@ -81,7 +84,7 @@ class PolicyWheelfootController:
         if self.standup_mode == "scripted":
             # The reference clock owns the start; started_at is set again at handoff.
             self.started_at = None
-            self.standup = ScriptedStandUp(self.contract, state)
+            self.standup = ScriptedStandUp(self.contract, state, self.standup_stop_at, self.planner)
 
     def stop(self) -> None:
         self.enabled = False
@@ -92,9 +95,16 @@ class PolicyWheelfootController:
         self.last_scan = None
         self.standup = None
 
+    def close(self) -> None:
+        """Release the planner worker process (idempotent; the control loop may already be done)."""
+        if self.planner is not None:
+            self.planner.close()
+            self.planner = None
+
     @property
     def standup_phase(self) -> int:
-        """-1 without the scripted mode, reference phase 0..5 while rising, 6 after handoff."""
+        """-1 without the scripted mode, reference phase 0..5 while rising, 6 after handoff;
+        with stop_at A: 0 P0, 1 P1 lift, 2 P2 legs to A, 3 P3 plant, 4 hold at A'."""
         return -1 if self.standup is None else self.standup.phase
 
     def handoff(self, state: SdkState) -> None:
@@ -114,7 +124,8 @@ class PolicyWheelfootController:
         if self.safety.reason:
             return self.safety.damping()
         rising = self.standup is not None and not self.standup.complete
-        self.safety.check_state(state, self.contract.standup.tilt_limit if rising else None)
+        self.safety.check_state(state, self.contract.standup.tilt_limit if rising else None,
+                                self.contract.standup.hard_limit_tolerance if rising else 0.)
         if self.safety.reason:
             return self.safety.damping()
         try:
