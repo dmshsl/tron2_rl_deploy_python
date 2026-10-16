@@ -1,7 +1,9 @@
 """Scripted seated stand-up: the canonical tron2_common reference tracked by PD, then handoff.
 
-stop_at="A" runs the seated route instead (P0 hold, P1 lift, P2 legs to pose A' with the
-wheels lifted, P3 plant) and then holds A' indefinitely: no P4, no handoff. Its plan is
+stop_at="A" runs the seated route instead (P0 hold, P1 lift the first leg clear of the floor,
+P2 legs to pose A' in the air, P3 lower onto A') and then holds A' indefinitely: no P4, no
+handoff. The route's targets carry the model's gravity-sag compensation (Route.command) for a
+leg while it is airborne. Its plan is
 computed in a worker process (the planner is pure Python and would starve the 500 Hz
 control thread through the GIL) under the same wall-clock budget and clock pause. The
 controller creates that process (RoutePlanner) before the SDK streams start: spawning it
@@ -146,6 +148,7 @@ class ScriptedStandUp:
         if names != REFERENCE_JOINTS:
             raise PolicyInputError("contract position joints disagree with the stand-up reference order")
         self.q0 = np.asarray(state.q[self.positions], dtype=np.float64)
+        self.kp = np.asarray(contract.control.kp, dtype=np.float64)[self.positions]  # for the route's sag compensation
         self.bounds = standup_bounds(contract)
         self.origin = state.timestamp
         self.previous = state.q.astype(np.float32).copy()
@@ -187,8 +190,10 @@ class ScriptedStandUp:
         return None
 
     def reference_targets(self, elapsed: float) -> Vector:
+        """Route targets include the gravity sag tau/kp of a leg while it is in the air (Route.command),
+        so the PD puts the leg where the plan has it instead of 2-4 deg (3 cm at the wheel) lower."""
         q = self.previous.copy()
-        source = reference.trajectory(self.q0, elapsed) if self.route is None else self.route.at(elapsed)
+        source = reference.trajectory(self.q0, elapsed) if self.route is None else self.route.command(elapsed, self.kp)
         q[self.positions] = source.astype(np.float32)
         return q
 
