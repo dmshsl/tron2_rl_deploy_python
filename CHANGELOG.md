@@ -14,6 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   disclosed in MODEL_CARD.md; this is not hardware qualification.
 
 ### Added
+- `run_policy.py --standup learned [--standup-model DIR]`: seated route to A'/A'_p
+  (as `--standup-stop-at A`), then the learned stand-up actor (`WF_TRON2A_STANDUP`: own 47/10
+  contract `standup_contract.py`, incremental joint targets at 1.5 rad/s with anti-windup and the
+  URDF 3 degree clamp, wheel feed-forward torque 8 N.m/unit), stand-up tilt latch 1.2 rad, start
+  check against A'/A'_p, episode timeout latch, FK+IMU height estimate for the success hold, then
+  the Base/BaseBlind handoff. `JointTargets.tau` (feed-forward torque) is published to the SDK.
+  The shipped stand-up ONNX is a stand-in that does not stand up.
+- `standup.handoff_power_on_seconds` (default 0): after a stand-up handoff the locomotion policy
+  starts at once on its pre-filled history. Isaac positive control: the 3 s PD-hold power-on blend
+  let 32/32 robots handed off from the ideal standing pose fall; 0 s: 0/32.
 - `run_policy.py --standup scripted`: `PolicyWheelfootController` tracks the
   shared `tron2_common` seated stand-up reference (P0 hold, P1-P3, scripted
   P4) with PD, a 1.0 rad/s target slew, the reference's own 3 degree limit

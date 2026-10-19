@@ -1,0 +1,170 @@
+schema_version: 1
+policy: standup
+source_task: Isaac-Limx-WF-TRON2A-StandUp
+checkpoint_sha256: 86624f548b031fb0255843e2d428d949686ce32ed1062e15a14da903c8b214a3
+fixture_sha256: 5bb7214779c525f221ce4128ec7aed0cb3e5424480f3b6043b92f1fc4ed9519a
+source_code_sha256:
+  tron2_rl/standup/pose_a.py: 3f57c7240e2fa7d6058d988c0616dd05bf62d7438cfaadebdc25f5337363fe66
+  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/robots/standup_pose_a_env.py: fe365c14d8ca3a3a7d1d38bd33020254e7a77d63c134532ba7b5e7f9a589035d
+  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/robots/standup_pose_a_signals.py: 3aa90de819e1c6d7605f963925ef6c29f9af1b3dc34ae207d2eb89cf46064a23
+  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/robots/limx_wheelfoot_tron2a_standup_cfg.py: 0fdabde7d71cc589c3a49882f28df99bc1125078f2bdd1675c9b775ad5f7341e
+sdk_names:
+- proximal_pitch_L_Joint
+- proximal_roll_L_Joint
+- proximal_yaw_L_Joint
+- knee_L_Joint
+- wheel_L_Joint
+- proximal_pitch_R_Joint
+- proximal_roll_R_Joint
+- proximal_yaw_R_Joint
+- knee_R_Joint
+- wheel_R_Joint
+position_names:
+- proximal_pitch_L_Joint
+- proximal_roll_L_Joint
+- proximal_yaw_L_Joint
+- knee_L_Joint
+- proximal_pitch_R_Joint
+- proximal_roll_R_Joint
+- proximal_yaw_R_Joint
+- knee_R_Joint
+wheel_names:
+- wheel_L_Joint
+- wheel_R_Joint
+position_sdk:
+- 0
+- 1
+- 2
+- 3
+- 5
+- 6
+- 7
+- 8
+wheel_sdk:
+- 4
+- 9
+standing:
+- 0.9
+- 0.0
+- 0.0
+- -1.8
+- 0.9
+- 0.0
+- 0.0
+- -1.8
+target_lower:
+- -3.0892327760299634
+- -0.20943951023931953
+- -3.6128315516282625
+- -2.5656340004316647
+- -3.0892327760299634
+- -3.1415926024401704
+- -1.4311699866353502
+- -2.5656340004316647
+target_upper:
+- 2.548180707911721
+- 3.1415926024401704
+- 1.4311699866353502
+- 0.20943951023931953
+- 2.548180707911721
+- 0.20943951023931953
+- 3.6128315516282625
+- 0.20943951023931953
+kp:
+- 159.6699981689453
+- 159.6699981689453
+- 53.220001220703125
+- 159.6699981689453
+- 159.6699981689453
+- 159.6699981689453
+- 53.220001220703125
+- 159.6699981689453
+kd:
+- 10.15999984741211
+- 10.15999984741211
+- 3.390000104904175
+- 10.15999984741211
+- 10.15999984741211
+- 10.15999984741211
+- 3.390000104904175
+- 10.15999984741211
+physics_dt: 0.005
+decimation: 4
+policy_dt: 0.02
+v_max: 1.5
+windup: 0.5
+wheel_torque_scale: 8.0
+wheel_torque_cap: 16.0
+actor_size: 47
+action_size: 10
+observation_blocks:
+- - base_ang_vel
+  - 3
+- - proj_gravity
+  - 3
+- - joint_pos
+  - 8
+- - joint_vel
+  - 10
+- - last_action
+  - 10
+- - joint_target
+  - 8
+- - phase
+  - 4
+- - progress
+  - 1
+ang_vel_scale: 0.25
+joint_vel_scale: 0.05
+observation_clip: 100.0
+phase:
+- 0.0
+- 0.0
+- 0.0
+- 1.0
+progress: 0.0
+episode_seconds: 10.0
+start_poses:
+- - -0.05615462477939352
+  - 2.8728935254719046
+  - -1.7788091176371734
+  - -2.336564143776634
+  - -0.05615462477939352
+  - -2.8728935254719046
+  - 1.7788091176371734
+  - -2.336564143776634
+- - -3.0892327760299634
+  - 0.09373290747835547
+  - 1.38341524757337
+  - -2.339641595580213
+  - -3.0892327760299634
+  - -0.09373290747835547
+  - -1.38341524757337
+  - -2.339641595580213
+start_tolerance: 0.17453292519943295
+settle_seconds: 0.5
+success:
+  height: 0.45
+  tilt: 0.15
+  joint_speed: 0.5
+  hold_seconds: 0.5
+  wheel_level_tolerance: 0.02
+  body_clearance: 0.02
+imu_to_base_rpy:
+- 0.0
+- 0.0
+- 0.0
+notes:
+- 'Actor input = Isaac StandUp observations(): gyro*0.25, gravity, q-standing (8),
+  dq*0.05 (8 legs then 2 wheels), last clipped action (10), q_tgt-standing (8), phase
+  one-hot P4, progress 0; clip +-100.'
+- q_tgt += clip(a)*v_max*policy_dt, |q_tgt-q| <= windup (pulled back at most v_max*dt),
+  clamp to URDF +-3 deg; q_tgt starts at the measured pose when the policy starts.
+- 'Wheels: kp = kd = 0 and feed-forward tau = clip(a)*8 N.m (cap 16), free rolling
+  at a = 0 as in training.'
+- 'Deploy safety additions (not training values): start within start_tolerance of
+  A''/A''_p per leg, settle_seconds dwell at A'' after the seated route, torque pre-clip
+  at the stand-up fraction, stand-up tilt latch, episode_seconds timeout latch.'
+- 'Success needs the root height: estimated by FK+IMU above the lowest wheel point,
+  only while both wheels are within wheel_level_tolerance and every other link/base
+  point is body_clearance above them (flat ground).'

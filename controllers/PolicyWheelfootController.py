@@ -7,7 +7,7 @@ vendor controllers/__init__.py which eagerly imports SDK and GUI dependencies.
 
 from dataclasses import replace
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 import numpy as np
 import onnxruntime as ort
@@ -31,8 +31,11 @@ from tron2_deploy.policy_targets import (
     torque_preclip,
 )
 from tron2_deploy.standup_mode import RoutePlanner, ScriptedStandUp, StopAt
+from tron2_deploy.standup_contract import load_standup_contract
+from tron2_deploy.standup_policy import LearnedStandUp, StandupActor, check_compatible
 
-StandupMode = Literal["none", "scripted"]
+StandupMode = Literal["none", "scripted", "learned"]
+STANDUP_MODEL: Final = Path(__file__).resolve().parent / "model/WF_TRON2A_STANDUP"
 
 
 class PolicyWheelfootController:
@@ -40,13 +43,22 @@ class PolicyWheelfootController:
 
     def __init__(self, model_dir: Path, contract: DeploymentContract,
                  height_provider: HeightScanProvider | None = None,
-                 standup: StandupMode = "none", standup_stop_at: StopAt = "handoff") -> None:
+                 standup: StandupMode = "none", standup_stop_at: StopAt = "handoff",
+                 standup_model_dir: Path = STANDUP_MODEL) -> None:
         self.contract = contract
         self.standup_mode: StandupMode = standup
         self.standup_stop_at: StopAt = standup_stop_at
-        self.standup: ScriptedStandUp | None = None
+        self.standup: ScriptedStandUp | LearnedStandUp | None = None
+        self.standup_contract = None
+        self.standup_actor: StandupActor | None = None
+        if standup == "learned":
+            # Validated before any SDK stream: its own 47/10 contract and ONNX, same joint layout/IMU.
+            self.standup_contract = load_standup_contract(standup_model_dir / "contract.yaml")
+            check_compatible(self.standup_contract, contract)
+            self.standup_actor = StandupActor(standup_model_dir, self.standup_contract)
         # The seated-route worker process is spawned here, before any SDK stream, not at enable.
-        self.planner: RoutePlanner | None = RoutePlanner() if standup == "scripted" and standup_stop_at == "A" else None
+        routed = standup == "learned" or (standup == "scripted" and standup_stop_at == "A")
+        self.planner: RoutePlanner | None = RoutePlanner() if routed else None
         self.safety = SafetyMonitor(contract)
         self.height_provider = height_provider
         options = ort.SessionOptions()
@@ -85,6 +97,10 @@ class PolicyWheelfootController:
             # The reference clock owns the start; started_at is set again at handoff.
             self.started_at = None
             self.standup = ScriptedStandUp(self.contract, state, self.standup_stop_at, self.planner)
+        elif self.standup_mode == "learned":
+            assert self.standup_contract is not None and self.standup_actor is not None
+            self.started_at = None
+            self.standup = LearnedStandUp(self.contract, self.standup_contract, self.standup_actor, state, self.planner)
 
     def stop(self) -> None:
         self.enabled = False
@@ -102,14 +118,25 @@ class PolicyWheelfootController:
             self.planner = None
 
     @property
+    def prepare_seconds(self) -> float:
+        """Power-on preparation before the first locomotion action: control.power_on_seconds at enable,
+        standup.handoff_power_on_seconds after a stand-up handoff (the robot is already up and balancing)."""
+        if self.standup is None:
+            return self.contract.control.power_on_seconds
+        return self.contract.standup.handoff_power_on_seconds
+
+    @property
     def standup_phase(self) -> int:
         """-1 without the scripted mode, reference phase 0..5 while rising, 6 after handoff;
-        with stop_at A: 0 P0, 1 P1 lift, 2 P2 legs to A, 3 P3 plant, 4 hold at A'."""
+        with stop_at A: 0 P0, 1 P1 lift, 2 P2 legs to A, 3 P3 plant, 4 hold at A';
+        learned: 0-4 seated route as stop_at A, 5 stand-up policy, 6 success and handoff."""
         return -1 if self.standup is None else self.standup.phase
 
     def handoff(self, state: SdkState) -> None:
         """DESIGN.md handoff rule: history pre-filled with the final measured stand-up state,
-        vel_error_ema zero, then the unchanged preparation and policy (zero command 0.5 s)."""
+        vel_error_ema zero, then the policy after standup.handoff_power_on_seconds (default 0: at once;
+        a 3 s PD-hold blend lets the balanced robot fall) with zero command for 0.5 s."""
+        print(f"HANDOFF policy={self.contract.policy} t={state.timestamp:.3f}", flush=True)
         placeholder = None if self.height_provider is None else np.zeros(self.contract.scan.count, dtype=np.float32)
         _, history = build_actor_input(state, PolicyMemory.empty(self.contract), placeholder,
                                        np.zeros(3, dtype=np.float32), self.contract)
@@ -131,7 +158,7 @@ class PolicyWheelfootController:
         try:
             finite_vector(commands, 3)
             targets = self._step(state, commands)
-            for value in (targets.q, targets.dq, targets.kp, targets.kd):
+            for value in (targets.q, targets.dq, targets.kp, targets.kd, targets.tau):
                 finite_vector(value, len(self.contract.joints.sdk_names))
             return targets
         except PolicyInputError as error:
@@ -153,9 +180,10 @@ class PolicyWheelfootController:
         if self.started_at is None:
             return torque_preclip(power_on_targets(self.hold_pose, 0., self.contract, ramp), state, self.contract)
         elapsed = state.timestamp - self.started_at
-        if elapsed <= self.contract.control.power_on_seconds:
+        prepare = self.prepare_seconds
+        if prepare > 0 and elapsed <= prepare:
             return torque_preclip(power_on_targets(self.hold_pose, elapsed, self.contract, ramp), state, self.contract)
-        if self.standup is not None and elapsed - self.contract.control.power_on_seconds < self.contract.standup.zero_command_seconds:
+        if self.standup is not None and elapsed - prepare < self.contract.standup.zero_command_seconds:
             commands = np.zeros_like(commands)
         if state.timestamp - self.last_policy_time >= self.contract.control.policy_dt - 1e-9:
             scan = None if self.height_provider is None else self.height_provider.get_scan(state)

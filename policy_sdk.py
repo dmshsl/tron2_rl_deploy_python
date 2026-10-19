@@ -153,7 +153,7 @@ class SdkAdapter:
 
     def publish(self, targets: JointTargets) -> None:
         with self.lock:
-            if not all(np.isfinite(value).all() for value in (targets.q, targets.dq, targets.kp, targets.kd)):
+            if not all(np.isfinite(value).all() for value in (targets.q, targets.dq, targets.kp, targets.kd, targets.tau)):
                 self.safety.trip("non-finite SDK target")
             self.last_publish = self.clock()
             if self.safety.reason or self.tripped.is_set():
@@ -161,6 +161,7 @@ class SdkAdapter:
             else:
                 self.command.q, self.command.dq = targets.q.tolist(), targets.dq.tolist()
                 self.command.Kp, self.command.Kd = targets.kp.tolist(), targets.kd.tolist()
+                self.command.tau = targets.tau.tolist()
                 started = self.clock()
                 self.robot.publishRobotCmd(self.command)
                 if os.environ.get("TRON2_SDK_WATCHDOG_DEBUG") and self.clock() - started > .02:

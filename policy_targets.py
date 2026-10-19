@@ -1,6 +1,6 @@
 """Training action processing, deployment power-on, and separate torque pre-clip."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -8,12 +8,21 @@ from tron2_deploy.policy_contract import DeploymentContract
 from tron2_deploy.policy_observation import SdkState, Vector, finite_vector
 
 
+def _no_torque() -> Vector:
+    return np.zeros(10, dtype=np.float32)
+
+
 @dataclass(frozen=True, slots=True)
 class JointTargets:
+    """MIT command per SDK joint: tau_motor = kp (q - q_m) + kd (dq - dq_m) + tau.
+
+    tau is the feed-forward torque; only the learned stand-up's torque-controlled wheels use it."""
+
     q: Vector
     dq: Vector
     kp: Vector
     kd: Vector
+    tau: Vector = field(default_factory=_no_torque)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,19 +80,23 @@ def power_on_targets(measured_pose: Vector, elapsed: float, contract: Deployment
 def torque_preclip(targets: JointTargets, state: SdkState, contract: DeploymentContract,
                    bounds: TargetBounds | None = None) -> JointTargets:
     """Bound PD torque by adjusting targets; never change actor action/history."""
-    for value in (targets.q, targets.dq, targets.kp, targets.kd):
+    for value in (targets.q, targets.dq, targets.kp, targets.kd, targets.tau):
         finite_vector(value, len(contract.joints.sdk_names))
     bounds = locomotion_bounds(contract) if bounds is None else bounds
     targets = clamp_targets(targets, contract, bounds)
     limit = bounds.torque
-    torque = targets.kp * (targets.q - state.q) + targets.kd * (targets.dq - state.dq)
+    tau = targets.tau
+    torque = targets.kp * (targets.q - state.q) + targets.kd * (targets.dq - state.dq) + tau
     bounded = np.clip(torque, -limit, limit)
-    q, dq = targets.q.copy(), targets.dq.copy()
+    q, dq, tau = targets.q.copy(), targets.dq.copy(), tau.copy()
     position = targets.kp > 0
     velocity = (~position) & (targets.kd > 0)
-    q[position] = state.q[position] + (bounded[position] - targets.kd[position] * (dq[position] - state.dq[position])) / targets.kp[position]
-    dq[velocity] = state.dq[velocity] + bounded[velocity] / targets.kd[velocity]
-    return clamp_targets(JointTargets(q, dq, targets.kp, targets.kd), contract, bounds)
+    feedforward = (~position) & (~velocity)
+    q[position] = state.q[position] + (bounded[position] - tau[position]
+                                       - targets.kd[position] * (dq[position] - state.dq[position])) / targets.kp[position]
+    dq[velocity] = state.dq[velocity] + (bounded[velocity] - tau[velocity]) / targets.kd[velocity]
+    tau[feedforward] = bounded[feedforward]
+    return clamp_targets(JointTargets(q, dq, targets.kp, targets.kd, tau), contract, bounds)
 
 
 def clamp_targets(targets: JointTargets, contract: DeploymentContract,
@@ -95,4 +108,4 @@ def clamp_targets(targets: JointTargets, contract: DeploymentContract,
     velocity = np.asarray(contract.safety.velocity_limit, dtype=np.float32)
     q[positions] = np.clip(q[positions], bounds.position[positions, 0], bounds.position[positions, 1])
     dq[wheels] = np.clip(dq[wheels], -velocity[wheels], velocity[wheels])
-    return JointTargets(q, dq, targets.kp, targets.kd)
+    return JointTargets(q, dq, targets.kp, targets.kd, targets.tau)

@@ -96,6 +96,12 @@ class StandupContract(FrozenModel):
     handoff_joint_speed: float = Field(default=0.5, gt=0)
     hold_seconds: float = Field(default=0.5, gt=0)
     zero_command_seconds: float = Field(default=0.5, ge=0)
+    # Preparation between a stand-up handoff and the first locomotion action. 0: the policy starts at
+    # once on its pre-filled history. Measured 2026-10-19 (tron2_rl/standup/handoff_eval.py positive
+    # control, 32 envs handed off from the ideal standing state): with the 3 s locomotion power-on
+    # blend the wheeled robot, an unbalanced inverted pendulum under a pure PD hold, fell in 0.38-0.58 s
+    # for BaseBlind 32/32; with 0 s, 0/32 fell. control.power_on_seconds still applies at enable.
+    handoff_power_on_seconds: float = Field(default=0.0, ge=0)
     certify_budget_seconds: float = Field(default=40.0, gt=0)
     timeout_margin_seconds: float = Field(default=3.0, ge=0)
     # Limp legs come to rest on their mechanical stops; a reading this far past the URDF hard

@@ -96,9 +96,11 @@ def test_speed_cap_phases_and_handoff_fill(contract):
     while not controller.standup.complete:
         targets = controller.step(state, np.zeros(3, dtype=np.float32))
         assert not controller.safety.reason, controller.safety.reason
+        phases.add(controller.standup_phase)
+        if controller.standup.complete:
+            break  # the handoff tick already carries the locomotion policy's first action
         peak = max(peak, float(np.max(np.abs(targets.q[positions] - previous[positions])) / .002))
         previous = targets.q.copy()
-        phases.add(controller.standup_phase)
         state = SdkState(targets.q, np.zeros(10), UPRIGHT, np.zeros(3), state.timestamp + .002)
     assert phases == {0, 1, 2, 3, 4, 5, HANDED_OFF}
     assert peak <= contract.standup.speed_limit + 1e-3
@@ -111,8 +113,11 @@ def test_speed_cap_phases_and_handoff_fill(contract):
     expected = (final.q - np.asarray(contract.joints.default_position))[positions]
     np.testing.assert_allclose(controller.mem.history[0, 6:14], expected, atol=1e-6)
     np.testing.assert_array_equal(controller.mem.vel_error_ema, 0.)
-    # Preparation after handoff keeps full gains (actuators already enabled).
-    prep = controller.step(state, np.zeros(3, dtype=np.float32))
+    # No PD-hold preparation after a stand-up (handoff_power_on_seconds 0): the policy acts on the
+    # next tick, at full gains (actuators already enabled).
+    assert controller.prepare_seconds == contract.standup.handoff_power_on_seconds == 0.
+    assert controller.last_policy_time == final.timestamp  # the handoff tick ran the policy
+    prep = controller.step(replace(state, timestamp=state.timestamp + .002), np.zeros(3, dtype=np.float32))
     np.testing.assert_allclose(prep.kp, np.asarray(contract.control.kp), rtol=1e-6)
 
 
@@ -127,7 +132,7 @@ def test_zero_command_window_after_handoff(contract, monkeypatch):
                         lambda outputs, feed: (seen.append(next(iter(feed.values())).copy()) or original(outputs, feed)))
     command = np.array([.5, 0., 0.], dtype=np.float32)
     for offset in (.3, .7):
-        later = replace(state, timestamp=controller.started_at + contract.control.power_on_seconds + offset)
+        later = replace(state, timestamp=controller.started_at + controller.prepare_seconds + offset)
         controller.step(later, command)
     first, second = seen[0][-3:], seen[1][-3:]
     np.testing.assert_array_equal(first, 0.)

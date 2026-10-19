@@ -3,7 +3,8 @@
 For Base, set TRON2_HEIGHT_SCAN_FACTORY=module:factory; factory(contract, mode)
 returns HeightScanProvider. GT is supplied by todo 11; perception factories return
 PerceptionHeightScanProvider(contract, frame_source). Schedule times start after
-the three-second preparation, in physical m/s and rad/s (not joystick units).
+the three-second preparation (after a stand-up handoff: standup.handoff_power_on_seconds,
+default 0), in physical m/s and rad/s (not joystick units).
 """
 
 import argparse
@@ -83,8 +84,12 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=60.)
     parser.add_argument("--csv", type=Path)
     parser.add_argument("--height_scan", choices=("gt", "perception"), default="perception")
-    parser.add_argument("--standup", choices=("none", "scripted"), default="none",
-                        help="scripted: tron2_common P1-P4 reference from the measured seated pose, then handoff")
+    parser.add_argument("--standup", choices=("none", "scripted", "learned"), default="none",
+                        help="scripted: tron2_common P1-P4 reference from the measured seated pose, then handoff; "
+                             "learned: seated route to A'/A'_p, the stand-up policy, success hold, then handoff")
+    parser.add_argument("--standup-model", type=Path,
+                        default=Path(__file__).resolve().parent / "controllers/model/WF_TRON2A_STANDUP",
+                        help="learned stand-up model directory (policy.onnx + contract.yaml)")
     parser.add_argument("--standup-stop-at", choices=("handoff", "A"), default="handoff",
                         help="A: run only the seated route P0-P3 to pose A' and hold there (no P4, no handoff)")
     parser.add_argument("--imu_offset_rpy", nargs=3, type=float)
@@ -110,11 +115,17 @@ def main() -> int:
             parser.error("schedule velocity is outside the generated training command ranges")
     print(yaml.safe_dump(contract.model_dump(mode="json"), sort_keys=False), flush=True)
     provider = None if args.dry_run else height_provider(contract, args.height_scan)
-    controller = PolicyWheelfootController(model_dir, contract, provider, args.standup, args.standup_stop_at)
+    controller = PolicyWheelfootController(model_dir, contract, provider, args.standup, args.standup_stop_at,
+                                           args.standup_model)
     if args.dry_run:
         print(f"DRY_RUN PASS actor={contract.actor_size} encoder={contract.encoder_input_size}; SDK not imported")
         print(f"STANDUP mode={args.standup} tilt_limit={contract.standup.tilt_limit} "
               f"speed_limit={contract.standup.speed_limit} stop_at={args.standup_stop_at}")
+        if controller.standup_contract is not None:
+            learned = controller.standup_contract
+            print(f"STANDUP_POLICY actor={learned.actor_size} actions={learned.action_size} "
+                  f"checkpoint_sha256={learned.checkpoint_sha256} episode_s={learned.episode_seconds} "
+                  f"model={args.standup_model}")
         controller.close()
         return 0
 
@@ -162,7 +173,7 @@ def main() -> int:
                     controller.prepare(state)
                     autostart = False
                 last_prepare = joy.prepare
-                policy_time = 0. if controller.started_at is None else max(0., now - controller.started_at - contract.control.power_on_seconds)
+                policy_time = 0. if controller.started_at is None else max(0., now - controller.started_at - controller.prepare_seconds)
                 commands = np.zeros(3, dtype=np.float32)
                 if schedule:
                     commands = schedule_command(schedule, policy_time)
