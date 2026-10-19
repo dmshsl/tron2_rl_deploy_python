@@ -275,7 +275,7 @@ def catch_contract(standup):
 
     bodies = [{"name": name, "mass": mass, "com": com.tolist()} for name, (mass, com) in urdf_masses().items()]
     data = standup.model_dump(mode="json")
-    data["success"] |= {"rule": "catch", "catch": {
+    data["success"] |= {"rule": "catch", "hold_seconds": catch.CATCH_HOLD_S, "catch": {
         "height": catch.CATCH_HEIGHT, "offset_min": catch.CATCH_OFFSET_MIN, "offset_max": catch.CATCH_OFFSET_MAX,
         "pitch": catch.CATCH_PITCH, "roll": catch.CATCH_ROLL, "hip_roll": catch.CATCH_HIP_ROLL,
         "hip_yaw": catch.CATCH_HIP_YAW, "manifold_tolerance": catch.CATCH_MANIFOLD_TOL,
@@ -321,18 +321,22 @@ def test_catch_components_accept_a_balanced_crouch_and_reject_a_prime(standup):
     behind, _ = crouch(.30, -.05)
     parts = catch_components(behind, np.zeros(8), np.zeros(2), gravity, height, plausible, contract.success.catch)
     assert [k for k, v in parts.items() if not v] == ["com"]
-    moving = catch_components(q, np.full(8, .5), np.zeros(2), gravity, height, plausible, contract.success.catch)
-    assert not moving["rest"]
+    moving = catch_components(q, np.full(8, .6), np.zeros(2), gravity, height, plausible, contract.success.catch)
+    assert not moving["rest"]  # ||qdot_8|| 1.70 > 1.5
+    settling = catch_components(q, np.full(8, .5), np.array([9., -9.]), gravity, height, plausible, contract.success.catch)
+    assert settling["rest"]  # decision 14: 1.41 rad/s and 9 rad/s wheels still hand off
     a_prime = catch_components(pose_a.POSE_A, np.zeros(8), np.zeros(2), gravity, .3, True, contract.success.catch)
     assert not a_prime["family"]
 
 
-def test_catch_hold_hands_off_and_the_old_height_is_not_needed(standup, locomotion):
+@pytest.mark.parametrize("hold", [0., .5])
+def test_catch_hold_hands_off_and_the_old_height_is_not_needed(standup, locomotion, hold):
     name, contract = locomotion
     ctrl = controller(name, contract)
     try:
         begin_policy(ctrl, standup)
-        ctrl.standup.contract = catch_contract(standup)
+        catch_rule = catch_contract(standup)
+        ctrl.standup.contract = catch_rule.model_copy(update={"success": catch_rule.success.model_copy(update={"hold_seconds": hold})})
         ctrl.standup.actor = lambda actor: np.zeros(10, dtype=np.float32)
         q, info = crouch(.30, .02)  # h 0.30 < 0.45: only the catch rule can succeed here
         t = 0.
@@ -341,6 +345,14 @@ def test_catch_hold_hands_off_and_the_old_height_is_not_needed(standup, locomoti
             assert not ctrl.safety.reason, ctrl.safety.reason
             t += .002
         assert ctrl.standup.complete and ctrl.standup_phase == HANDED_OFF
-        assert .47 <= t <= .5
+        assert hold - .03 <= t <= hold + .021  # decision 14 (hold 0): the first policy tick in the region
     finally:
         ctrl.close()
+
+
+def test_catch_rule_hold_zero_needs_a_good_step(standup):
+    data = catch_contract(standup).model_dump(mode="json")
+    assert data["success"]["hold_seconds"] == 0.
+    data["success"] |= {"rule": "height", "catch": None}
+    with pytest.raises(ValidationError):
+        StandupPolicyContract.model_validate(data)  # the height rule keeps a positive hold

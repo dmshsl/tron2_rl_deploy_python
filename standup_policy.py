@@ -11,10 +11,11 @@ with kp = kd = 0 (free rolling at a = 0, as in training). Everything is fail-clo
 outside the trained A'/A'_p neighbourhood, a non-finite network output or no success within
 the training episode length raises PolicyInputError, which trips the damping latch.
 
-Success rule "catch" (DESIGN decision 13, tron2_rl/standup/catch.py; contract success.catch): the Base catch
-region held 0.5 s - FK+IMU height >= 0.25 m with the wheel-only plausibility below, whole-body CoM (FK with the
+Success rule "catch" (DESIGN decisions 13/14, tron2_rl/standup/catch.py; contract success.catch): the Base catch
+region held success.hold_seconds (decision 14: 0 = the first policy step inside it) - FK+IMU height >= 0.25 m with the wheel-only plausibility below, whole-body CoM (FK with the
 training mass table) -0.02..+0.06 m ahead of the line through the two wheel contact points, |pitch|,|roll| <= 0.15,
-both legs in the Base joint family near the balanced-crouch manifold, ||qdot_8|| <= 1 rad/s, |wheel qdot| <= 5.
+both legs in the Base joint family near the balanced-crouch manifold, ||qdot_8|| <= catch.joint_speed (1.5 rad/s),
+|wheel qdot| <= catch.wheel_speed (10 rad/s).
 Success rule "height" (contracts before decision 13): h >= 0.45 m, tilt < 0.15 rad, |qdot_10| < 0.5 rad/s held 0.5 s.
 Both need the root height,
 which the robot cannot measure: it is estimated by FK + IMU as the height of the base origin
@@ -280,7 +281,7 @@ class LearnedStandUp:
             good = (plausible and height >= success.height and tilt(gravity) < success.tilt
                     and float(np.linalg.norm(state.dq)) < success.joint_speed)
         self.hold = self.hold + self.contract.policy_dt if good else 0.
-        if self.hold >= success.hold_seconds - 1e-6:
+        if good and self.hold >= success.hold_seconds - 1e-6:
             self.complete = True
             self.handoff_state = state
             self.phase = HANDED_OFF

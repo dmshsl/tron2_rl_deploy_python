@@ -30,7 +30,8 @@ class CatchBody(FrozenModel):
 
 
 class StandupCatch(FrozenModel):
-    """Base catch region (tron2_rl/standup/catch.py, DESIGN decision 13), held hold_seconds = success."""
+    """Base catch region (tron2_rl/standup/catch.py, DESIGN decisions 13/14), held hold_seconds = success
+    (decision 14: hold_seconds 0 = the first policy step in the region)."""
 
     height: float = Field(gt=0)
     offset_min: float
@@ -64,7 +65,7 @@ class StandupSuccess(FrozenModel):
     height: float = Field(gt=0)
     tilt: float = Field(gt=0)
     joint_speed: float = Field(gt=0)
-    hold_seconds: float = Field(gt=0)
+    hold_seconds: float = Field(ge=0)  # rule "height" needs > 0; "catch" 0 = first step in the region
     wheel_level_tolerance: float = Field(gt=0)
     body_clearance: float = Field(ge=0)
 
@@ -72,6 +73,8 @@ class StandupSuccess(FrozenModel):
     def check_rule(self) -> "StandupSuccess":
         if (self.rule == "catch") != (self.catch is not None):
             raise ValueError("success rule 'catch' needs (only) the catch block")
+        if self.rule == "height" and self.hold_seconds <= 0:
+            raise ValueError("success rule 'height' needs hold_seconds > 0")
         return self
 
 
