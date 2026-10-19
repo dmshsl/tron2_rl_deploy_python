@@ -31,6 +31,7 @@ def replay(contract: StandupPolicyContract, session: ort.InferenceSession, trace
         np.testing.assert_allclose(actual, expected, atol=1e-5, rtol=0, err_msg=f"{where} block={block}")
 
     positions = list(contract.position_sdk)
+    raw_relative = [0.]
     envs, steps = trace["q"].shape[:2]
     for env in range(envs):
         memory = None
@@ -50,7 +51,12 @@ def replay(contract: StandupPolicyContract, session: ort.InferenceSession, trace
                 compare(name, actor[offset:offset + size], trace["actor_input"][env, step, offset:offset + size], where)
                 offset += size
             actions = session.run(None, {session.get_inputs()[0].name: actor})[0]
-            compare("raw_actions", actions, trace["raw_actions"][env, step], where)
+            # The robot only sees clip(a, -1, 1). Raw outputs can be ~1e2 (round-1 actors trained with action std
+            # 15-24), where float32 rounding alone is ~1e-5 absolute: raw is checked relatively, clipped absolutely.
+            expected = trace["raw_actions"][env, step]
+            relative = float(np.max(np.abs(actions - expected) / np.maximum(np.abs(expected), 1.)))
+            raw_relative[0] = max(raw_relative[0], relative)  # reported, not gated (pre-clip internal)
+            compare("actions_clipped", np.clip(actions, -1., 1.), np.clip(expected, -1., 1.), where)
             clipped = np.clip(actions, -1., 1.).astype(np.float32)
             target = incremental_target(memory.target, state.q[positions].astype(np.float32), clipped[:8], contract)
             compare("target_after", target, trace["target_after"][env, step], where)
@@ -58,6 +64,7 @@ def replay(contract: StandupPolicyContract, session: ort.InferenceSession, trace
             # Continue from the plant's applied values (replay, not a counterfactual rollout).
             memory = StandupMemory(trace["target_after"][env, step].astype(np.float32),
                                    trace["applied_action"][env, step].astype(np.float32))
+    print(f"STANDUP_RAW_ACTION_REL max={raw_relative[0]:.6g}")
     return maxima
 
 
