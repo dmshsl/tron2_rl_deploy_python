@@ -11,7 +11,12 @@ with kp = kd = 0 (free rolling at a = 0, as in training). Everything is fail-clo
 outside the trained A'/A'_p neighbourhood, a non-finite network output or no success within
 the training episode length raises PolicyInputError, which trips the damping latch.
 
-Success (h >= 0.45 m, tilt < 0.15 rad, |qdot_10| < 0.5 rad/s held 0.5 s) needs the root height,
+Success rule "catch" (DESIGN decision 13, tron2_rl/standup/catch.py; contract success.catch): the Base catch
+region held 0.5 s - FK+IMU height >= 0.25 m with the wheel-only plausibility below, whole-body CoM (FK with the
+training mass table) -0.02..+0.06 m ahead of the line through the two wheel contact points, |pitch|,|roll| <= 0.15,
+both legs in the Base joint family near the balanced-crouch manifold, ||qdot_8|| <= 1 rad/s, |wheel qdot| <= 5.
+Success rule "height" (contracts before decision 13): h >= 0.45 m, tilt < 0.15 rad, |qdot_10| < 0.5 rad/s held 0.5 s.
+Both need the root height,
 which the robot cannot measure: it is estimated by FK + IMU as the height of the base origin
 above the lowest wheel point, and only while both wheels are at the same height and no leg or
 base point is lower (DESIGN "P4 rewards/success": no success judgement while contact is uncertain).
@@ -29,7 +34,7 @@ from scipy.spatial.transform import Rotation
 from tron2_deploy.policy_contract import DeploymentContract
 from tron2_deploy.policy_observation import PolicyInputError, SdkState, Vector, finite_vector
 from tron2_deploy.policy_targets import JointTargets, standup_bounds, torque_preclip
-from tron2_deploy.standup_contract import StandupPolicyContract, StandupSuccess
+from tron2_deploy.standup_contract import StandupCatch, StandupPolicyContract, StandupSuccess
 from tron2_deploy.standup_mode import RoutePlanner, ScriptedStandUp
 
 ROOT: Final = Path(__file__).resolve().parents[1]
@@ -131,6 +136,58 @@ def estimate_height(q8: Vector, gravity: Vector, success: StandupSuccess) -> tup
     return -lowest, plausible
 
 
+def pitch_roll(gravity: Vector) -> tuple[float, float]:
+    """Base pitch (+ = nose down) and roll from the unit gravity in the base frame (catch.pitch_roll)."""
+    return float(np.arctan2(gravity[0], -gravity[2])), float(np.arctan2(-gravity[1], -gravity[2]))
+
+
+def com_offset(q8: Vector, gravity: Vector, catch: StandupCatch) -> float:
+    """Signed horizontal distance (m, + = ahead) of the whole-body CoM from the line through the two wheel
+    contact points (L -> R), as the Isaac env's signed_line_distance(centre_of_mass, wheel_contact_points)."""
+    up = -np.asarray(gravity, dtype=np.float64)
+    up = up / max(np.linalg.norm(up), 1e-9)
+    links = forward(np.asarray(q8, dtype=np.float64))
+    total, moment = 0., np.zeros(3)
+    for body in catch.bodies:
+        matrix = links.get(body.name, np.eye(4))  # bodies not in the leg chains are fixed to the base
+        total += body.mass
+        moment += body.mass * (matrix[:3, :3] @ np.asarray(body.com) + matrix[:3, 3])
+    centre = moment / total
+    points = []
+    for side in ("L", "R"):
+        matrix = links[f"wheel_{side}_Link"]
+        axle = matrix[:3, 1]
+        radial = -up - (-up @ axle) * axle
+        radial = radial / max(np.linalg.norm(radial), 1e-6)
+        points.append(matrix[:3, 3] + catch.wheel_radius * radial)
+    seed = np.array([1., 0., 0.]) if abs(up[0]) < .9 else np.array([0., 1., 0.])
+    e1 = seed - (seed @ up) * up
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(up, e1)
+    flat = lambda v: np.array([v @ e1, v @ e2])  # noqa: E731 - right-handed horizontal coordinates
+    a, b, c = flat(points[0]), flat(points[1]), flat(centre)
+    direction, offset = b - a, c - a
+    return float((direction[0] * offset[1] - direction[1] * offset[0]) / max(np.linalg.norm(direction), 1e-6))
+
+
+def catch_components(q8: Vector, qdot8: Vector, wheel_qdot: Vector, gravity: Vector, height: float,
+                     plausible: bool, catch: StandupCatch) -> dict[str, bool]:
+    """tron2_rl/standup/catch.catch_components with deploy signals: wheel-only = the FK plausibility check."""
+    pitch, roll = pitch_roll(gravity)
+    table = np.asarray(catch.manifold)
+    hip = float(np.interp(height, table[:, 0], table[:, 1]))
+    knee = float(np.interp(height, table[:, 0], table[:, 2]))
+    legs = np.asarray(q8, dtype=np.float64).reshape(2, 4)
+    family = bool(np.all(np.abs(legs[:, 1]) <= catch.hip_roll) and np.all(np.abs(legs[:, 2]) <= catch.hip_yaw)
+                  and np.all(np.abs(legs[:, 0] - hip) <= catch.manifold_tolerance)
+                  and np.all(np.abs(legs[:, 3] - knee) <= catch.manifold_tolerance))
+    offset = com_offset(q8, gravity, catch)
+    return {"wheel_only": bool(plausible), "height": height >= catch.height,
+            "com": catch.offset_min <= offset <= catch.offset_max,
+            "attitude": abs(pitch) <= catch.pitch and abs(roll) <= catch.roll, "family": family,
+            "rest": float(np.linalg.norm(qdot8)) <= catch.joint_speed and bool(np.all(np.abs(wheel_qdot) <= catch.wheel_speed))}
+
+
 class StandupActor:
     """FLOAT32 interface stand-up ONNX; one 47 -> 10 call per policy tick."""
 
@@ -214,15 +271,21 @@ class LearnedStandUp:
         height, plausible = estimate_height(measured, gravity, self.contract.success)
         self.last_height, self.last_plausible = height, plausible
         success = self.contract.success
-        good = (plausible and height >= success.height and tilt(gravity) < success.tilt
-                and float(np.linalg.norm(state.dq)) < success.joint_speed)
+        if success.rule == "catch":
+            assert success.catch is not None
+            parts = catch_components(measured, state.dq[self.positions], state.dq[self.wheels], gravity, height,
+                                     plausible, success.catch)
+            good = all(parts.values())
+        else:
+            good = (plausible and height >= success.height and tilt(gravity) < success.tilt
+                    and float(np.linalg.norm(state.dq)) < success.joint_speed)
         self.hold = self.hold + self.contract.policy_dt if good else 0.
         if self.hold >= success.hold_seconds - 1e-6:
             self.complete = True
             self.handoff_state = state
             self.phase = HANDED_OFF
             print(f"STANDUP_SUCCESS t={state.timestamp:.3f} policy_s={state.timestamp - self.policy_started_at:.3f} "
-                  f"height_est={height:.4f} tilt={tilt(gravity):.4f}", flush=True)
+                  f"height_est={height:.4f} tilt={tilt(gravity):.4f} rule={success.rule}", flush=True)
 
     def targets(self, state: SdkState) -> JointTargets:
         if self.complete:

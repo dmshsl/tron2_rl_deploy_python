@@ -94,3 +94,27 @@ def test_standup_parity_negative_control_fails_on_joint_pos(recorded):
     broken = contract.model_copy(update={"standing": (0.,) * 8})
     with pytest.raises(AssertionError, match="block=joint_pos"):
         replay(broken, session, trace)
+
+
+def test_standup_catch_offset_parity(recorded):
+    # DESIGN decision 13: the deploy CoM-over-wheel-line offset (FK + the contract's training mass table) equals the
+    # Isaac env's catch_offset on every non-reset step of the trace (traces/contracts from round 2 on).
+    from tron2_deploy.standup_policy import base_gravity, com_offset
+
+    contract, _, trace = recorded
+    if "catch_offset" not in trace or contract.success.catch is None:
+        pytest.skip("trace/contract predate the catch success rule")
+    positions = list(contract.position_sdk)
+    worst = 0.
+    envs, steps = trace["q"].shape[:2]
+    for env in range(envs):
+        for step in range(steps):
+            if trace["reset"][env, step]:
+                continue  # catch_offset still holds the pre-reset state there
+            state = SdkState(trace["q"][env, step], trace["dq"][env, step], trace["imu_quat"][env, step],
+                             trace["imu_gyro"][env, step], 0.)
+            _, gravity = base_gravity(state, contract)
+            actual = com_offset(state.q[positions], gravity, contract.success.catch)
+            worst = max(worst, abs(actual - float(trace["catch_offset"][env, step])))
+    print(f"STANDUP_CATCH_OFFSET_PARITY max_abs_m={worst:.6g}")
+    assert worst < 2e-3

@@ -264,3 +264,83 @@ def test_cli_dry_run_learned_and_bad_model_dir(tmp_path):
     assert "STANDUP mode=learned" in result.stdout and "STANDUP_POLICY actor=47 actions=10" in result.stdout
     missing = subprocess.run(run + ["--standup-model", str(tmp_path)], text=True, capture_output=True, timeout=60, check=False)
     assert missing.returncode != 0 and "contract.yaml" in missing.stderr
+
+
+# ---- DESIGN decision 13: success rule "catch" (the Base catch region, tron2_rl/standup/catch.py) ----
+
+def catch_contract(standup):
+    """The shipped contract with the catch success rule and the URDF mass table (Isaac adds the payload)."""
+    import catch
+    from catch_grid import urdf_masses
+
+    bodies = [{"name": name, "mass": mass, "com": com.tolist()} for name, (mass, com) in urdf_masses().items()]
+    data = standup.model_dump(mode="json")
+    data["success"] |= {"rule": "catch", "catch": {
+        "height": catch.CATCH_HEIGHT, "offset_min": catch.CATCH_OFFSET_MIN, "offset_max": catch.CATCH_OFFSET_MAX,
+        "pitch": catch.CATCH_PITCH, "roll": catch.CATCH_ROLL, "hip_roll": catch.CATCH_HIP_ROLL,
+        "hip_yaw": catch.CATCH_HIP_YAW, "manifold_tolerance": catch.CATCH_MANIFOLD_TOL,
+        "manifold": [list(r) for r in zip(catch.MANIFOLD_H, catch.MANIFOLD_HIP, catch.MANIFOLD_KNEE)],
+        "joint_speed": catch.CATCH_QDOT, "wheel_speed": catch.CATCH_WHEEL_SPEED, "wheel_radius": .1, "bodies": bodies}}
+    return StandupPolicyContract.model_validate(data)
+
+
+def crouch(h, d):
+    """Symmetric wheel-only crouch at root height h with the CoM d ahead of the axle (catch_grid solver, URDF masses)."""
+    from catch_grid import solve, urdf_masses
+
+    q, info = solve(h, d, 0., urdf_masses())
+    return q, info
+
+
+def test_catch_rule_contract_requires_its_block(standup):
+    data = standup.model_dump(mode="json")
+    data["success"]["rule"] = "catch"
+    with pytest.raises(ValidationError):
+        StandupPolicyContract.model_validate(data)
+    assert catch_contract(standup).success.rule == "catch"
+
+
+@pytest.mark.parametrize("h,d", [(.30, .02), (.35, -.04), (.45, .06)])
+def test_com_offset_equals_the_catch_grid_geometry(standup, h, d):
+    from tron2_deploy.standup_policy import com_offset
+
+    contract = catch_contract(standup)
+    q, info = crouch(h, d)
+    assert com_offset(q, np.array([0., 0., -1.]), contract.success.catch) == pytest.approx(info["offset"], abs=1e-3)
+
+
+def test_catch_components_accept_a_balanced_crouch_and_reject_a_prime(standup):
+    from tron2_deploy.standup_policy import catch_components
+
+    contract = catch_contract(standup)
+    gravity = np.array([0., 0., -1.])
+    q, _ = crouch(.30, .02)
+    height, plausible = estimate_height(q, gravity, contract.success)
+    parts = catch_components(q, np.zeros(8), np.zeros(2), gravity, height, plausible, contract.success.catch)
+    assert all(parts.values()), parts
+    behind, _ = crouch(.30, -.05)
+    parts = catch_components(behind, np.zeros(8), np.zeros(2), gravity, height, plausible, contract.success.catch)
+    assert [k for k, v in parts.items() if not v] == ["com"]
+    moving = catch_components(q, np.full(8, .5), np.zeros(2), gravity, height, plausible, contract.success.catch)
+    assert not moving["rest"]
+    a_prime = catch_components(pose_a.POSE_A, np.zeros(8), np.zeros(2), gravity, .3, True, contract.success.catch)
+    assert not a_prime["family"]
+
+
+def test_catch_hold_hands_off_and_the_old_height_is_not_needed(standup, locomotion):
+    name, contract = locomotion
+    ctrl = controller(name, contract)
+    try:
+        begin_policy(ctrl, standup)
+        ctrl.standup.contract = catch_contract(standup)
+        ctrl.standup.actor = lambda actor: np.zeros(10, dtype=np.float32)
+        q, info = crouch(.30, .02)  # h 0.30 < 0.45: only the catch rule can succeed here
+        t = 0.
+        while not ctrl.standup.complete and t < 2.:
+            ctrl.step(sdk_state(standup, q, t), ZERO3)
+            assert not ctrl.safety.reason, ctrl.safety.reason
+            t += .002
+        assert ctrl.standup.complete and ctrl.standup_phase == HANDED_OFF
+        assert .47 <= t <= .5
+    finally:
+        ctrl.close()

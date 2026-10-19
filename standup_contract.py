@@ -21,13 +21,58 @@ class FrozenModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
 
+class CatchBody(FrozenModel):
+    """One rigid body of the training articulation (Isaac nominal mass, CoM in the body frame)."""
+
+    name: str
+    mass: float = Field(ge=0)
+    com: tuple[float, float, float]
+
+
+class StandupCatch(FrozenModel):
+    """Base catch region (tron2_rl/standup/catch.py, DESIGN decision 13), held hold_seconds = success."""
+
+    height: float = Field(gt=0)
+    offset_min: float
+    offset_max: float
+    pitch: float = Field(gt=0)
+    roll: float = Field(gt=0)
+    hip_roll: float = Field(gt=0)
+    hip_yaw: float = Field(gt=0)
+    manifold_tolerance: float = Field(gt=0)
+    manifold: tuple[tuple[float, float, float], ...]  # (root height, hip pitch, knee), rad, increasing height
+    joint_speed: float = Field(gt=0)  # ||qdot|| of the eight position joints
+    wheel_speed: float = Field(gt=0)  # |qdot| per wheel
+    wheel_radius: float = Field(gt=0)
+    bodies: tuple[CatchBody, ...]
+
+    @model_validator(mode="after")
+    def check_catch(self) -> "StandupCatch":
+        if not self.offset_min < self.offset_max:
+            raise ValueError("catch CoM offset window must be ordered")
+        heights = [row[0] for row in self.manifold]
+        if len(heights) < 2 or heights != sorted(heights):
+            raise ValueError("catch manifold needs >= 2 rows with increasing height")
+        if sum(body.mass for body in self.bodies) <= 0:
+            raise ValueError("catch mass table is empty")
+        return self
+
+
 class StandupSuccess(FrozenModel):
+    rule: Literal["height", "catch"] = "height"
+    catch: StandupCatch | None = None
     height: float = Field(gt=0)
     tilt: float = Field(gt=0)
     joint_speed: float = Field(gt=0)
     hold_seconds: float = Field(gt=0)
     wheel_level_tolerance: float = Field(gt=0)
     body_clearance: float = Field(ge=0)
+
+    @model_validator(mode="after")
+    def check_rule(self) -> "StandupSuccess":
+        if (self.rule == "catch") != (self.catch is not None):
+            raise ValueError("success rule 'catch' needs (only) the catch block")
+        return self
 
 
 class StandupPolicyContract(FrozenModel):
