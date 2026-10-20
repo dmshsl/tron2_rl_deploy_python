@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Replace the stand-up ONNX with the in-place actor `o2_s43 @3150` (reward v7: heading-error and wheel-odometry inputs,
+  hand-off bound 0.12 m). Isaac A'/A': hand-off 1.000, displacement p90 7.2 cm, heading p90 2.95 deg, Base died 0/256.
+  MuJoCo A' chain 20/20, displacement p90 7.9 cm (round 4: 1.6 m). Parity 0 on every block. Not hardware qualification.
+- `standup_contract.py`: `policy: sitdown` and the `seated` success rule (learned sit-down contracts).
 - Replace the stand-in stand-up ONNX with the learned StandUp round-4 actor `r4_ftm_s42 @600`, distilled from the
   round-2 actor and fine-tuned with PPO. Results:
   - Isaac A'/A': hand-off 1.000; Base died 0/256.

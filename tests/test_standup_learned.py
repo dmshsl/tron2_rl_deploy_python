@@ -65,8 +65,13 @@ def test_shipped_contract_matches_training_constants(standup, locomotion):
     if success.rule == "catch":  # DESIGN decisions 13/14: hand-off at the first step in the Base catch region
         import catch
         assert success.hold_seconds == catch.CATCH_HOLD_S
-        assert (success.catch.joint_speed, success.catch.wheel_speed) == (catch.CATCH_QDOT, catch.CATCH_WHEEL_SPEED)
+        # reward v5+ (decision 17): the hand-off needs |wheel| <= 3 rad/s; v7 (decision 18) the odometry bound
+        wheel = catch.CATCH_WHEEL_SPEED_V5 if standup.heading_input else catch.CATCH_WHEEL_SPEED
+        assert (success.catch.joint_speed, success.catch.wheel_speed) == (catch.CATCH_QDOT, wheel)
         assert success.catch.height == catch.CATCH_HEIGHT
+        if standup.odometry_input:
+            import inplace
+            assert success.catch.drift == inplace.CATCH_ODOMETRY
     else:
         assert success.hold_seconds == pose_a.SUCCESS_HOLD_S
     assert standup.episode_seconds == pose_a.EPISODE_S and standup.actor_size == 47
