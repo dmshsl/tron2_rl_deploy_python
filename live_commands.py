@@ -25,7 +25,7 @@ import os
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from time import monotonic
+from time import monotonic, sleep
 from typing import Final
 
 MAGIC: Final = 0x54324C43  # "T2LC"
@@ -106,11 +106,16 @@ class LiveChannel:
         struct.pack_into("<Q", self.map, offset, odd + 1)  # even: record complete
 
     def _read(self, layout: struct.Struct, offset: int) -> tuple:
-        for _ in range(100):
+        """Consistent record; TimeoutError if a writer stays inside for ~2 ms (descheduled mid-write, or died
+        there) - callers keep their previous record then."""
+        deadline = monotonic() + .002
+        while True:
             values = layout.unpack_from(self.map, offset)
             if values[0] % 2 == 0 and struct.unpack_from("<Q", self.map, offset)[0] == values[0]:
                 return values[1:]
-        raise TimeoutError("live command block stayed locked")
+            if monotonic() > deadline:
+                raise TimeoutError("live command block stayed locked")
+            sleep(0)
 
     def write_command(self, command: Command) -> None:
         self._write(_COMMAND, _COMMAND_AT, (command.stamp, command.mode, command.run_token, command.vx,
@@ -138,14 +143,18 @@ class LiveCommandSource:
     def __init__(self, path: Path, clock=monotonic) -> None:
         self.channel = LiveChannel(path)
         self.clock = clock
-        self.token = self.channel.read_command().run_token
+        self.last = self.channel.read_command()
+        self.token = self.last.run_token
         self.running = False
         self.cap: tuple[float, float] | None = None
 
     def poll(self) -> tuple[str | None, tuple[float, float, float]]:
         """(transition, (vx, vy, wz)); transition is "run" (prepare now), "idle" (stop) or None. The latest
         requested cap is in self.cap ((vx, wz) or None when the writer sets none)."""
-        command = self.channel.read_command()
+        try:
+            command = self.last = self.channel.read_command()
+        except TimeoutError:  # the writer is mid-record: use the previous one (it still goes stale on time)
+            command = self.last
         transition = None
         if command.mode == MODE_RUN and (not self.running or command.run_token != self.token):
             transition, self.running = "run", True
