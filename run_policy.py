@@ -28,9 +28,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent / "controllers"))
 from PolicyWheelfootController import PolicyWheelfootController
 
 from tron2_deploy.height_scan_provider import HeightScanProvider
+from tron2_deploy.live_commands import STATE_IDLE, STATE_LATCHED, STATE_RUNNING, LiveCommandSource
 from tron2_deploy.policy_contract import DeploymentContract, load_contract
 from tron2_deploy.policy_observation import PolicyInputError, Vector
 from tron2_deploy.policy_sdk import SdkAdapter
+from tron2_deploy.policy_targets import JointTargets
 
 
 class ScheduleEntry(BaseModel):
@@ -93,8 +95,13 @@ def main() -> int:
     parser.add_argument("--standup-stop-at", choices=("handoff", "A"), default="handoff",
                         help="A: run only the seated route P0-P3 to pose A' and hold there (no P4, no handoff)")
     parser.add_argument("--imu_offset_rpy", nargs=3, type=float)
+    parser.add_argument("--live-commands", type=Path,
+                        help="tron2_deploy/live_commands.py file (e.g. the MuJoCo demo GUI): velocity commands and "
+                             "mode control (idle = limp, run = prepare/stand-up/drive) instead of --schedule/joystick")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+    if args.live_commands is not None and (args.schedule is not None or args.autostart):
+        parser.error("--live-commands replaces --schedule and --autostart")
     if args.robot_ip != "127.0.0.1":
         parser.error("this execution scope forbids real-robot connections; use 127.0.0.1")
     if args.standup_stop_at != "handoff" and args.standup != "scripted":
@@ -136,6 +143,7 @@ def main() -> int:
     if not robot.init(args.robot_ip):
         raise PolicyInputError("SDK localhost initialization failed")
     adapter = SdkAdapter(robot, datatypes.RobotCmd, controller.safety)
+    live = None if args.live_commands is None else LiveCommandSource(args.live_commands)
     try:
         deadline = monotonic() + min(5., args.timeout)
         if not adapter.ready_state.wait(max(0., deadline - monotonic())) or not adapter.ready_imu.wait(max(0., deadline - monotonic())):
@@ -155,6 +163,8 @@ def main() -> int:
             begin = monotonic()
             debug_timing = bool(os.environ.get("TRON2_SDK_WATCHDOG_DEBUG"))  # stalls >20 ms to stderr
             next_tick, last_prepare = begin, False
+            last_report = -np.inf
+            live_cap = None
             autostart = args.autostart
             while monotonic() - begin < args.timeout:
                 now = monotonic()
@@ -163,9 +173,21 @@ def main() -> int:
                 except PolicyInputError as error:
                     controller.safety.trip(str(error))
                     adapter.publish(controller.safety.damping())
+                    if live is not None:
+                        live.report(controller.standup_phase, STATE_LATCHED, 0., (0., 0., 0.), controller.safety.reason)
                     sleep(contract.control.publish_dt)
                     next_tick = monotonic()
                     continue
+                live_velocity = None
+                if live is not None:
+                    transition, live_velocity = live.poll()
+                    if transition == "run":
+                        controller.prepare(state)
+                    elif transition == "idle":
+                        controller.stop()
+                    if live.cap is not None and live.cap != live_cap:
+                        live_cap = live.cap
+                        print(f"COMMAND_CAP live -> {controller.set_command_cap(*live_cap)}", flush=True)
                 if joy.stop:
                     controller.stop()
                     autostart = False
@@ -175,15 +197,29 @@ def main() -> int:
                 last_prepare = joy.prepare
                 policy_time = 0. if controller.started_at is None else max(0., now - controller.started_at - controller.prepare_seconds)
                 commands = np.zeros(3, dtype=np.float32)
-                if schedule:
+                if live_velocity is not None:  # clamp, cap and slew limit happen in the controller's shaper
+                    commands = np.array(live_velocity, dtype=np.float32)
+                elif schedule:
                     commands = schedule_command(schedule, policy_time)
                 elif now - joy.timestamp <= 0.5:
                     ranges = np.array(contract.command_ranges, dtype=np.float32)
                     axes = np.clip(joy.axes, -1., 1.)
                     commands = np.where(axes >= 0, axes * ranges[:, 1], -axes * ranges[:, 0])
-                targets = controller.step(state, commands)
+                if live is not None and not live.running:
+                    # Live idle: SDK connected, limp (zero gains, the measured pose), no stand-up and no
+                    # state checks - a limp heap may rest on a joint stop, which would latch the controller.
+                    zero = np.zeros_like(state.q)
+                    targets = JointTargets(state.q.copy(), zero, zero.copy(), zero.copy())
+                else:
+                    targets = controller.step(state, commands)
                 stepped = monotonic()
                 adapter.publish(targets)
+                if live is not None and now - last_report >= .02:
+                    last_report = now
+                    live.report(controller.standup_phase if live.running else -1,
+                                STATE_LATCHED if controller.safety.reason else
+                                STATE_RUNNING if live.running else STATE_IDLE,
+                                policy_time, controller.shaped_command, controller.safety.reason)
                 if debug_timing and monotonic() - now > .02:
                     print(f"CTRL_LOOP_SLOW t={now - begin:.3f} step_ms={1e3 * (stepped - now):.1f} "
                           f"publish_ms={1e3 * (monotonic() - stepped):.1f}", file=sys.stderr, flush=True)
@@ -204,6 +240,8 @@ def main() -> int:
     finally:
         adapter.release()
         controller.close()
+        if live is not None:
+            live.close()
     return 0
 
 
