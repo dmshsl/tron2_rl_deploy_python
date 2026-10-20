@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Replace the stand-in stand-up ONNX with the learned StandUp round-4 actor `r4_ftm_s42 @600`, distilled from the
+  round-2 actor and fine-tuned with PPO. Results:
+  - Isaac A'/A': hand-off 1.000; Base died 0/256.
+  - MuJoCo A' chain: 19/20.
+  - Limp route: 4/10. Roll/roll ends 4/4; mixed-family ends 0/5.
+  - Parity: 0 on every block.
+  Details are in MODEL_CARD.md. This is not hardware qualification.
 - Replace Base weights with user-approved Base-RealMap seed43 @26500; retain
   FP64-internal ONNX arithmetic, the identical hardened deployment contract,
   and byte-identical V22 BaseBlind artifacts. Retrain/perception failures remain
@@ -20,7 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URDF 3 degree clamp, wheel feed-forward torque 8 N.m/unit), stand-up tilt latch 1.2 rad, start
   check against A'/A'_p, episode timeout latch, FK+IMU height estimate for the success hold, then
   the Base/BaseBlind handoff. `JointTargets.tau` (feed-forward torque) is published to the SDK.
-  The shipped stand-up ONNX is a stand-in that does not stand up.
 - `standup.handoff_power_on_seconds` (default 0): after a stand-up handoff the locomotion policy
   starts at once on its pre-filled history. Isaac positive control: the 3 s PD-hold power-on blend
   let 32/32 robots handed off from the ideal standing pose fall; 0 s: 0/32.

@@ -1,13 +1,14 @@
 schema_version: 1
 policy: standup
 source_task: Isaac-Limx-WF-TRON2A-StandUp
-checkpoint_sha256: 86624f548b031fb0255843e2d428d949686ce32ed1062e15a14da903c8b214a3
-fixture_sha256: 5bb7214779c525f221ce4128ec7aed0cb3e5424480f3b6043b92f1fc4ed9519a
+checkpoint_sha256: 43dfdbb3dca888aaa587f1a942bd54b229cbc1ad86adc5867ff0b6c6ecde493c
+fixture_sha256: d90af21680b8fe2217e9bd4908fdbfde8d5c36a741466ad7ff253de5c2751562
 source_code_sha256:
-  tron2_rl/standup/pose_a.py: 3f57c7240e2fa7d6058d988c0616dd05bf62d7438cfaadebdc25f5337363fe66
-  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/robots/standup_pose_a_env.py: fe365c14d8ca3a3a7d1d38bd33020254e7a77d63c134532ba7b5e7f9a589035d
-  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/robots/standup_pose_a_signals.py: 3aa90de819e1c6d7605f963925ef6c29f9af1b3dc34ae207d2eb89cf46064a23
-  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/robots/limx_wheelfoot_tron2a_standup_cfg.py: 0fdabde7d71cc589c3a49882f28df99bc1125078f2bdd1675c9b775ad5f7341e
+  tron2_rl/standup/pose_a.py: 599deb3fa5830f67e8403764f4f26eb21e497def669ea5be39f082699c7adc27
+  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/robots/standup_pose_a_env.py: 21845dfd850084dd270bcdac74462fddbe1f0e9d788106575f378c7fff59d8e6
+  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/robots/standup_pose_a_signals.py: 40a79e22a68c429dd247390d3979f7ac2a0e7523e35288dd2dc40e394a0525e2
+  tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/robots/limx_wheelfoot_tron2a_standup_cfg.py: 2abaf5826cbd1da145795e6a059c406e55208be840be36de6a74e125451bac0e
+  tron2_rl/standup/catch.py: a15747e7cafb2d8f43ddda1a0df8226f889e6ca422e24552e6a6e859f6b2ff84
 sdk_names:
 - proximal_pitch_L_Joint
 - proximal_roll_L_Joint
@@ -144,10 +145,121 @@ start_poses:
 start_tolerance: 0.17453292519943295
 settle_seconds: 0.5
 success:
+  rule: catch
+  catch:
+    height: 0.25
+    offset_min: -0.02
+    offset_max: 0.06
+    pitch: 0.15
+    roll: 0.15
+    hip_roll: 0.2
+    hip_yaw: 0.3
+    manifold_tolerance: 0.35
+    manifold:
+    - - 0.225
+      - 1.885
+      - -2.602
+    - - 0.246
+      - 1.815
+      - -2.541
+    - - 0.289
+      - 1.676
+      - -2.417
+    - - 0.338
+      - 1.536
+      - -2.268
+    - - 0.387
+      - 1.396
+      - -2.115
+    - - 0.437
+      - 1.257
+      - -1.953
+    - - 0.49
+      - 1.117
+      - -1.764
+    - - 0.542
+      - 0.977
+      - -1.567
+    joint_speed: 1.5
+    wheel_speed: 10.0
+    wheel_radius: 0.1
+    bodies:
+    - name: base_Link
+      mass: 13.739680290222168
+      com:
+      - -0.0016516760224476457
+      - -8.056955994106829e-05
+      - 0.14884619414806366
+    - name: limx_imu
+      mass: 0.009999999776482582
+      com:
+      - 0.0
+      - 0.0
+      - 0.0
+    - name: proximal_pitch_L_Link
+      mass: 2.069999933242798
+      com:
+      - -0.0052200001664459705
+      - 0.06976000219583511
+      - -0.0060800001956522465
+    - name: proximal_pitch_R_Link
+      mass: 2.069999933242798
+      com:
+      - -0.0052200001664459705
+      - -0.06976000219583511
+      - -0.0060800001956522465
+    - name: proximal_roll_L_Link
+      mass: 1.7400000095367432
+      com:
+      - 0.03123999945819378
+      - 0.0003499999875202775
+      - -0.08414000272750854
+    - name: proximal_roll_R_Link
+      mass: 1.7400000095367432
+      com:
+      - 0.03123999945819378
+      - -0.0003499999875202775
+      - -0.08414000272750854
+    - name: proximal_yaw_L_Link
+      mass: 1.559999942779541
+      com:
+      - -0.0027600000612437725
+      - 0.0016400000313296914
+      - -0.1114799976348877
+    - name: proximal_yaw_R_Link
+      mass: 1.559999942779541
+      com:
+      - -0.0027600000612437725
+      - -0.0016400000313296914
+      - -0.1114799976348877
+    - name: knee_L_Link
+      mass: 4.420000076293945
+      com:
+      - -0.0021699999924749136
+      - -0.024320000782608986
+      - -0.13739000260829926
+    - name: knee_R_Link
+      mass: 4.420000076293945
+      com:
+      - -0.0021699999924749136
+      - 0.024320000782608986
+      - -0.13739000260829926
+    - name: wheel_L_Link
+      mass: 0.75
+      com:
+      - 0.000539999979082495
+      - 0.004000000189989805
+      - 0.00033999999868683517
+    - name: wheel_R_Link
+      mass: 0.75
+      com:
+      - 0.000539999979082495
+      - -0.004000000189989805
+      - 0.00033999999868683517
   height: 0.45
   tilt: 0.15
   joint_speed: 0.5
-  hold_seconds: 0.5
+  hold_seconds: 0.0
   wheel_level_tolerance: 0.02
   body_clearance: 0.02
 imu_to_base_rpy:

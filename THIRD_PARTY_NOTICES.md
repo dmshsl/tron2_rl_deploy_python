@@ -48,7 +48,7 @@ independent of the Apache-2.0 license on the surrounding code.
 | `controllers/model/WF_TRON2A_BASE/encoder.onnx` | 1023376 | `ac69d2cc4e7576a91280692c40542d2489dec1123402f42c2060cd3be0bb0c18` | [Base / encoder](MODEL_CARD.md#wf_tron2a_baseencoderonnx) | Base-RealMap seed43 @26500 | Isaac simulation; rights ⚠ TO CONFIRM | ⚠ TO CONFIRM |
 | `controllers/model/WF_TRON2A_BASE_BLIND/policy.onnx` | 1520164 | `628ed6c7a3b0ff4aa46ddb1ae2b2d10555c0d252398ed219e5109295e550c2d7` | [BaseBlind / policy](MODEL_CARD.md#wf_tron2a_base_blindpolicyonnx) | V22 seedB @14500 | Isaac simulation; rights ⚠ TO CONFIRM | ⚠ TO CONFIRM |
 | `controllers/model/WF_TRON2A_BASE_BLIND/encoder.onnx` | 1023376 | `9dca7e0bcbdab2fbdc1eb9a34270afa05ca735372665f208b3c4c7ef184a01bc` | [BaseBlind / encoder](MODEL_CARD.md#wf_tron2a_base_blindencoderonnx) | V22 seedB @14500 | Isaac simulation; rights ⚠ TO CONFIRM | ⚠ TO CONFIRM |
-| `controllers/model/WF_TRON2A_STANDUP/policy.onnx` | 373542 | `d03443a3e5d57961901ef2121b56e02f1198992488ea976cc7178f9a48c2d9d7` | [StandUp / policy](MODEL_CARD.md#wf_tron2a_standuppolicyonnx) | pose-A smoke 3 @199 (stand-in) | Isaac simulation; rights ⚠ TO CONFIRM | ⚠ TO CONFIRM |
+| `controllers/model/WF_TRON2A_STANDUP/policy.onnx` | 373542 | `e9007889c039b83b178c651c8ba8e3c567688ba458866717feae9cb266c31349` | [StandUp / policy](MODEL_CARD.md#wf_tron2a_standuppolicyonnx) | StandUp round 4 r4_ftm_s42 @600 | Isaac simulation; rights ⚠ TO CONFIRM | ⚠ TO CONFIRM |
 
 Evidence for SF/WF was collected 2026-07-16; DASF size and SHA-256
 were collected 2026-08-20. Digests were computed by `sha256sum` on

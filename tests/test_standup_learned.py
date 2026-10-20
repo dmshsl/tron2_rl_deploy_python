@@ -59,8 +59,16 @@ def test_shipped_contract_matches_training_constants(standup, locomotion):
     np.testing.assert_allclose(standup.target_lower, pose_a.LOWER)
     np.testing.assert_allclose(standup.start_poses, [pose_a.POSE_A, pose_a.POSE_A_P])
     assert (standup.v_max, standup.windup, standup.policy_dt) == (pose_a.V_MAX, pose_a.WINDUP, pose_a.POLICY_DT)
-    assert (standup.success.height, standup.success.tilt, standup.success.joint_speed, standup.success.hold_seconds) == (
-        pose_a.SUCCESS_HEIGHT, pose_a.SUCCESS_TILT, pose_a.SUCCESS_QDOT, pose_a.SUCCESS_HOLD_S)
+    success = standup.success
+    assert (success.height, success.tilt, success.joint_speed) == (
+        pose_a.SUCCESS_HEIGHT, pose_a.SUCCESS_TILT, pose_a.SUCCESS_QDOT)
+    if success.rule == "catch":  # DESIGN decisions 13/14: hand-off at the first step in the Base catch region
+        import catch
+        assert success.hold_seconds == catch.CATCH_HOLD_S
+        assert (success.catch.joint_speed, success.catch.wheel_speed) == (catch.CATCH_QDOT, catch.CATCH_WHEEL_SPEED)
+        assert success.catch.height == catch.CATCH_HEIGHT
+    else:
+        assert success.hold_seconds == pose_a.SUCCESS_HOLD_S
     assert standup.episode_seconds == pose_a.EPISODE_S and standup.actor_size == 47
 
 
@@ -165,6 +173,7 @@ def test_success_hold_hands_off_with_the_deploy_rule(standup, locomotion):
     ctrl = controller(name, contract)
     try:
         begin_policy(ctrl, standup)
+        ctrl.standup.contract = height_contract(standup)  # this test is about the height rule's 0.5 s hold
         ctrl.standup.actor = lambda actor: np.zeros(10, dtype=np.float32)
         t, state = 0., None
         while not ctrl.standup.complete and t < 2.:
@@ -268,6 +277,13 @@ def test_cli_dry_run_learned_and_bad_model_dir(tmp_path):
 
 # ---- DESIGN decision 13: success rule "catch" (the Base catch region, tron2_rl/standup/catch.py) ----
 
+def height_contract(standup):
+    """The shipped contract with the (pre-decision-13) height success rule: h, tilt, ||qdot|| held 0.5 s."""
+    data = standup.model_dump(mode="json")
+    data["success"] |= {"rule": "height", "catch": None, "hold_seconds": pose_a.SUCCESS_HOLD_S}
+    return StandupPolicyContract.model_validate(data)
+
+
 def catch_contract(standup):
     """The shipped contract with the catch success rule and the URDF mass table (Isaac adds the payload)."""
     import catch
@@ -293,7 +309,7 @@ def crouch(h, d):
 
 
 def test_catch_rule_contract_requires_its_block(standup):
-    data = standup.model_dump(mode="json")
+    data = height_contract(standup).model_dump(mode="json")
     data["success"]["rule"] = "catch"
     with pytest.raises(ValidationError):
         StandupPolicyContract.model_validate(data)
