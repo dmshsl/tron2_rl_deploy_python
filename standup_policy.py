@@ -15,7 +15,9 @@ Success rule "catch" (DESIGN decisions 13/14, tron2_rl/standup/catch.py; contrac
 region held success.hold_seconds (decision 14: 0 = the first policy step inside it) - FK+IMU height >= 0.25 m with the wheel-only plausibility below, whole-body CoM (FK with the
 training mass table) -0.02..+0.06 m ahead of the line through the two wheel contact points, |pitch|,|roll| <= 0.15,
 both legs in the Base joint family near the balanced-crouch manifold, ||qdot_8|| <= catch.joint_speed (1.5 rad/s),
-|wheel qdot| <= catch.wheel_speed (10 rad/s).
+|wheel qdot| <= catch.wheel_speed (3 rad/s; 10 until decision 17).
+Heading input (contract heading_input, reward v6): the actor's progress input is wrap(yaw - yaw at [기립]), so it turns
+the robot back to the heading it had before the seated route.
 Success rule "height" (contracts before decision 13): h >= 0.45 m, tilt < 0.15 rad, |qdot_10| < 0.5 rad/s held 0.5 s.
 Both need the root height,
 which the robot cannot measure: it is estimated by FK + IMU as the height of the base origin
@@ -40,6 +42,7 @@ from tron2_deploy.standup_mode import RoutePlanner, ScriptedStandUp
 
 ROOT: Final = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tron2_common"))
+from tron2_common import wheel_odometry
 from tron2_common.kinematics import collision_data, forward, wheel_floor
 
 POLICY_PHASE: Final = 5
@@ -62,6 +65,8 @@ class StandupMemory:
 
     target: Vector
     last_action: Vector
+    heading_ref: float = 0.  # yaw (rad) at the stand-up start; the heading-input contracts observe yaw - this
+    odometry: wheel_odometry.OdometryState | None = None  # odometry-input contracts (v7): displacement since the start
 
 
 def base_gravity(state: SdkState, contract: StandupPolicyContract) -> tuple[Vector, Vector]:
@@ -71,6 +76,46 @@ def base_gravity(state: SdkState, contract: StandupPolicyContract) -> tuple[Vect
     gyro = mount.apply(state.gyro).astype(np.float32)
     gravity = world_from_base.inv().apply([0., 0., -1.]).astype(np.float32)
     return gyro, gravity
+
+
+def base_yaw(state: SdkState, contract: StandupPolicyContract) -> float:
+    """Heading of the base (rad): atan2(2(wz + xy), 1 - 2(y^2 + z^2)) of the normalised world-from-base quaternion, the
+    arithmetic of the Isaac env (tron2_rl/standup/pose_a.heading_error, FP64)."""
+    mount = Rotation.from_euler("xyz", contract.imu_to_base_rpy)
+    x, y, z, w = (Rotation.from_quat(state.quat[[1, 2, 3, 0]]) * mount.inv()).as_quat()
+    norm = float(np.sqrt(w * w + x * x + y * y + z * z))
+    w, x, y, z = w / norm, x / norm, y / norm, z / norm
+    return float(np.arctan2(2. * (w * z + x * y), 1. - 2. * (y * y + z * z)))
+
+
+def heading_error(state: SdkState, reference: float, contract: StandupPolicyContract) -> float:
+    error = base_yaw(state, contract) - reference
+    return float(np.arctan2(np.sin(error), np.cos(error)))
+
+
+def base_quaternion(state: SdkState, contract: StandupPolicyContract) -> Vector:
+    """World-from-base quaternion (w, x, y, z) through the IMU mount."""
+    mount = Rotation.from_euler("xyz", contract.imu_to_base_rpy)
+    x, y, z, w = (Rotation.from_quat(state.quat[[1, 2, 3, 0]]) * mount.inv()).as_quat()
+    return np.array([w, x, y, z])
+
+
+def start_odometry(state: SdkState, contract: StandupPolicyContract) -> wheel_odometry.OdometryState:
+    _, gravity = base_gravity(state, contract)
+    return wheel_odometry.start(state.q[list(contract.position_sdk)], state.q[list(contract.wheel_sdk)], gravity)
+
+
+def advance_odometry(memory: StandupMemory, state: SdkState, contract: StandupPolicyContract) -> StandupMemory:
+    """v7: one policy step of the wheel odometry (Isaac StandUpPoseAEnv.advance_odometry, the same arithmetic)."""
+    if not contract.odometry_input:
+        return memory
+    if memory.odometry is None:
+        raise PolicyInputError("odometry-input stand-up without a started odometry")
+    gyro, gravity = base_gravity(state, contract)
+    odometry = wheel_odometry.update(memory.odometry, state.q[list(contract.position_sdk)],
+                                     state.q[list(contract.wheel_sdk)], gravity, gyro, base_quaternion(state, contract),
+                                     memory.heading_ref, contract.policy_dt)
+    return StandupMemory(memory.target, memory.last_action, memory.heading_ref, odometry)
 
 
 def tilt(gravity: Vector) -> float:
@@ -88,10 +133,21 @@ def standup_observation(state: SdkState, memory: StandupMemory, contract: Standu
                             dq * np.float32(contract.joint_vel_scale),
                             finite_vector(memory.last_action, contract.action_size),
                             finite_vector(memory.target, 8) - standing,
-                            np.asarray(contract.phase, dtype=np.float32),
-                            np.array([contract.progress], dtype=np.float32)))
+                            phase_input(memory, contract),
+                            np.array([heading_error(state, memory.heading_ref, contract) if contract.heading_input
+                                      else contract.progress], dtype=np.float32)))
     clip = np.float32(contract.observation_clip)
     return finite_vector(np.clip(actor, -clip, clip), contract.actor_size)
+
+
+def phase_input(memory: StandupMemory, contract: StandupPolicyContract) -> Vector:
+    """The phase block: constants, or (v7) the odometry displacement in slots 0-1."""
+    phase = np.asarray(contract.phase, dtype=np.float32).copy()
+    if contract.odometry_input:
+        if memory.odometry is None:
+            raise PolicyInputError("odometry-input stand-up without a started odometry")
+        phase[:2] = memory.odometry.displacement.astype(np.float32)
+    return phase
 
 
 def incremental_target(target: Vector, measured: Vector, action: Vector,
@@ -172,8 +228,10 @@ def com_offset(q8: Vector, gravity: Vector, catch: StandupCatch) -> float:
 
 
 def catch_components(q8: Vector, qdot8: Vector, wheel_qdot: Vector, gravity: Vector, height: float,
-                     plausible: bool, catch: StandupCatch) -> dict[str, bool]:
-    """tron2_rl/standup/catch.catch_components with deploy signals: wheel-only = the FK plausibility check."""
+                     plausible: bool, catch: StandupCatch, heading: float = 0.,
+                     displacement: Vector | None = None) -> dict[str, bool]:
+    """tron2_rl/standup/catch.catch_components with deploy signals: wheel-only = the FK plausibility check; with
+    catch.heading (v6) also |heading error| <= catch.heading (the Isaac v6 hand-off's heading part)."""
     pitch, roll = pitch_roll(gravity)
     table = np.asarray(catch.manifold)
     hip = float(np.interp(height, table[:, 0], table[:, 1]))
@@ -183,10 +241,15 @@ def catch_components(q8: Vector, qdot8: Vector, wheel_qdot: Vector, gravity: Vec
                   and np.all(np.abs(legs[:, 0] - hip) <= catch.manifold_tolerance)
                   and np.all(np.abs(legs[:, 3] - knee) <= catch.manifold_tolerance))
     offset = com_offset(q8, gravity, catch)
-    return {"wheel_only": bool(plausible), "height": height >= catch.height,
-            "com": catch.offset_min <= offset <= catch.offset_max,
-            "attitude": abs(pitch) <= catch.pitch and abs(roll) <= catch.roll, "family": family,
-            "rest": float(np.linalg.norm(qdot8)) <= catch.joint_speed and bool(np.all(np.abs(wheel_qdot) <= catch.wheel_speed))}
+    parts = {"wheel_only": bool(plausible), "height": height >= catch.height,
+             "com": catch.offset_min <= offset <= catch.offset_max,
+             "attitude": abs(pitch) <= catch.pitch and abs(roll) <= catch.roll, "family": family,
+             "rest": float(np.linalg.norm(qdot8)) <= catch.joint_speed and bool(np.all(np.abs(wheel_qdot) <= catch.wheel_speed))}
+    if catch.heading is not None:
+        parts["heading"] = abs(heading) <= catch.heading
+    if catch.drift is not None:  # v7: back near the policy start (odometry estimate)
+        parts["drift"] = displacement is not None and float(np.linalg.norm(displacement)) <= catch.drift
+    return parts
 
 
 class StandupActor:
@@ -218,6 +281,7 @@ class LearnedStandUp:
         self.contract = contract
         self.actor = actor
         self.route = ScriptedStandUp(locomotion, state, "A", planner)
+        self.heading_ref = base_yaw(state, contract)  # heading at [기립]: the v6 actor undoes the route's yaw
         self.bounds = standup_bounds(locomotion)
         self.complete = False
         self.handoff_state: SdkState | None = None
@@ -252,7 +316,8 @@ class LearnedStandUp:
                 raise PolicyInputError(f"learned stand-up start: {side} leg {np.degrees(error):.1f} deg from A'/A'_p "
                                        f"(> {np.degrees(self.contract.start_tolerance):.1f}); outside the trained starts")
         self.memory = StandupMemory(state.q[self.positions].astype(np.float32).copy(),
-                                    np.zeros(self.contract.action_size, dtype=np.float32))
+                                    np.zeros(self.contract.action_size, dtype=np.float32), self.heading_ref,
+                                    start_odometry(state, self.contract) if self.contract.odometry_input else None)
         self.policy_started_at = state.timestamp
         self.phase = POLICY_PHASE
         print(f"STANDUP_POLICY_START t={state.timestamp:.3f} q={np.round(q, 4).tolist()}", flush=True)
@@ -260,12 +325,13 @@ class LearnedStandUp:
     def tick(self, state: SdkState) -> None:
         """One policy step: observation, actor, incremental target, wheel torque, success hold."""
         assert self.memory is not None
+        self.memory = advance_odometry(self.memory, state, self.contract)
         actor = standup_observation(state, self.memory, self.contract)
         action = np.clip(self.actor(actor), -1., 1.).astype(np.float32)
         measured = state.q[self.positions].astype(np.float32)
         target = incremental_target(self.memory.target, measured, action[:8], self.contract)
         self.wheel_tau = wheel_torque(action[8:], self.contract)
-        self.memory = StandupMemory(target, action)
+        self.memory = StandupMemory(target, action, self.memory.heading_ref, self.memory.odometry)
         self.last_tick = state.timestamp
         self.ticks += 1
         _, gravity = base_gravity(state, self.contract)
@@ -274,8 +340,10 @@ class LearnedStandUp:
         success = self.contract.success
         if success.rule == "catch":
             assert success.catch is not None
+            heading = heading_error(state, self.memory.heading_ref, self.contract)
+            odometry = self.memory.odometry
             parts = catch_components(measured, state.dq[self.positions], state.dq[self.wheels], gravity, height,
-                                     plausible, success.catch)
+                                     plausible, success.catch, heading, None if odometry is None else odometry.displacement)
             good = all(parts.values())
         else:
             good = (plausible and height >= success.height and tilt(gravity) < success.tilt

@@ -14,7 +14,8 @@ import pytest
 
 from tron2_deploy.policy_observation import SdkState
 from tron2_deploy.standup_contract import OBSERVATION_BLOCKS, StandupPolicyContract, load_standup_contract
-from tron2_deploy.standup_policy import StandupMemory, incremental_target, standup_observation, wheel_torque
+from tron2_deploy.standup_policy import (StandupMemory, advance_odometry, incremental_target, standup_observation,
+                                        start_odometry, wheel_torque)
 
 MODEL = Path(os.environ.get("TRON2_STANDUP_MODEL_DIR",
                             Path(__file__).resolve().parents[1] / "controllers/model/WF_TRON2A_STANDUP"))
@@ -41,10 +42,14 @@ def replay(contract: StandupPolicyContract, session: ort.InferenceSession, trace
                              trace["imu_gyro"][env, step], step * contract.policy_dt)
             if trace["reset"][env, step]:
                 # Deploy start(): q_tgt latches the measured pose, last action zero (env _reset_idx).
-                memory = StandupMemory(state.q[positions].astype(np.float32).copy(), np.zeros(10, dtype=np.float32))
+                # v6 heading input: the deploy's yaw_ref (the heading at [기립]) is the env's per-reset draw.
+                heading_ref = float(trace["heading_ref"][env, step]) if "heading_ref" in trace else 0.
+                memory = StandupMemory(state.q[positions].astype(np.float32).copy(), np.zeros(10, dtype=np.float32),
+                                       heading_ref, start_odometry(state, contract) if contract.odometry_input else None)
             assert memory is not None
             compare("target_before", memory.target, trace["target_before"][env, step], where)
             compare("last_action", memory.last_action, trace["last_action"][env, step], where)
+            memory = advance_odometry(memory, state, contract)  # v7: the deploy tick's order
             actor = standup_observation(state, memory, contract)
             offset = 0
             for name, size in OBSERVATION_BLOCKS:
@@ -63,7 +68,7 @@ def replay(contract: StandupPolicyContract, session: ort.InferenceSession, trace
             compare("wheel_torque", wheel_torque(clipped[8:], contract), trace["wheel_torque"][env, step], where)
             # Continue from the plant's applied values (replay, not a counterfactual rollout).
             memory = StandupMemory(trace["target_after"][env, step].astype(np.float32),
-                                   trace["applied_action"][env, step].astype(np.float32))
+                                   trace["applied_action"][env, step].astype(np.float32), memory.heading_ref, memory.odometry)
     print(f"STANDUP_RAW_ACTION_REL max={raw_relative[0]:.6g}")
     return maxima
 

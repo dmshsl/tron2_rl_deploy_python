@@ -46,6 +46,8 @@ class StandupCatch(FrozenModel):
     wheel_speed: float = Field(gt=0)  # |qdot| per wheel
     wheel_radius: float = Field(gt=0)
     bodies: tuple[CatchBody, ...]
+    heading: float | None = Field(default=None, gt=0)  # |heading error| bound (rad), heading-input contracts (v6)
+    drift: float | None = Field(default=None, gt=0)  # |odometry displacement| bound (m), odometry-input contracts (v7)
 
     @model_validator(mode="after")
     def check_catch(self) -> "StandupCatch":
@@ -112,6 +114,12 @@ class StandupPolicyContract(FrozenModel):
     observation_clip: float = Field(gt=0)
     phase: tuple[float, ...]
     progress: float
+    # Reward variant v6 (tron2_rl/standup/DESIGN.md decision 17): the progress input carries the heading error
+    # wrap(yaw - yaw at the stand-up start, i.e. at [기립] before the seated route) instead of the constant above.
+    heading_input: bool = False
+    # Reward variant v7 (decision 17 (f)): phase slots 0-1 carry the wheel-odometry displacement since the policy started
+    # (tron2_common.wheel_odometry, start heading frame, m) instead of the constants above.
+    odometry_input: bool = False
     episode_seconds: float = Field(gt=0)
     start_poses: tuple[tuple[float, ...], ...]
     start_tolerance: float = Field(gt=0, le=0.5)

@@ -42,6 +42,13 @@ from tron2_common.seated_route import Route
 
 HANDED_OFF: Final = 6
 StopAt = Literal["handoff", "A"]
+# Seated route wheel brake (standup-inplace): every wheel holds the position it had when the route started
+# (MIT law kp (q_hold - q) - kd dq, under the same gain ramp and torque pre-clip as the legs). The resting leg's
+# planted wheel otherwise rolled freely (kp 0, kd 0.6) while the other leg lifted and swung, and the body yawed
+# 3-7 deg per leg move (MuJoCo demo heaps); an airborne wheel just keeps its angle. A rolling wheel never helps
+# the route: it is planned with every contact static.
+ROUTE_WHEEL_KP: Final = 30.
+ROUTE_WHEEL_KD: Final = 2.
 
 
 def _certify(q0: Vector) -> Vector:
@@ -73,19 +80,21 @@ def _plain(value: object) -> object:
 
 
 def _warm_up() -> bool:
-    """Worker-process entry run once at start: import the planner and fill its geometry caches."""
-    from tron2_common.route_geometry import footprint, levers
+    """Worker-process entry run once at start: import the planner and fill its caches (geometry, leg-family
+    elevation grids, the constant lowering certificates), so the first stand-up plans as fast as later ones."""
+    from tron2_common.seated_route import warm_up
 
-    footprint()
-    for side in ("L", "R"):
-        levers(side)
+    warm_up()
     return True
 
 
 def _plan_route(q0: Vector) -> tuple[bool, Route | str]:
     """Worker-process entry: (True, Route) or (False, reason); exceptions never cross the pipe."""
+    started = monotonic()
     try:
-        return True, reference.route_to_a(q0)
+        route = reference.route_to_a(q0)
+        route.info.setdefault("plan_s", round(monotonic() - started, 3))  # worker compute time (ROUTE_INFO)
+        return True, route
     except reference.UnsafeReference as error:
         return False, str(error)
 
@@ -152,6 +161,7 @@ class ScriptedStandUp:
         self.bounds = standup_bounds(contract)
         self.origin = state.timestamp
         self.previous = state.q.astype(np.float32).copy()
+        self.wheel_hold = state.q[list(contract.joints.wheel_indices)].astype(np.float32).copy()
         self.last_time = state.timestamp
         self.wait_started: float | None = None
         self.hold_since: float | None = None
@@ -214,16 +224,19 @@ class ScriptedStandUp:
         q[self.positions] = self.previous[self.positions] + np.clip(
             desired[self.positions] - self.previous[self.positions], -step, step)
         wheels = list(self.contract.joints.wheel_indices)
-        q[wheels] = state.q[wheels]
+        brake = self.stop_at == "A"
+        q[wheels] = self.wheel_hold if brake else state.q[wheels]
         self.previous = q.copy()
         fraction = float(np.clip(elapsed / float(reference.PHASE_ENDS[0]), 0., 1.))
         initial = self.contract.control.initial_gain_fraction
         gain = np.float32(initial + (1. - initial) * fraction)
+        kp = np.asarray(self.contract.control.kp, dtype=np.float32).copy()
         kd = np.asarray(self.contract.control.kd, dtype=np.float32).copy()
         if self.settings.wheel_kd is not None:
             kd[wheels] = self.settings.wheel_kd
-        targets = JointTargets(q, np.zeros_like(q), np.asarray(self.contract.control.kp, dtype=np.float32) * gain,
-                               kd * gain)
+        if brake:
+            kp[wheels], kd[wheels] = ROUTE_WHEEL_KP, ROUTE_WHEEL_KD
+        targets = JointTargets(q, np.zeros_like(q), kp * gain, kd * gain)
         if certified is not None and self.stop_at == "handoff":
             self._update_handoff(state, elapsed)
         return torque_preclip(targets, state, self.contract, self.bounds)
