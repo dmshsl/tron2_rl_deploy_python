@@ -452,6 +452,18 @@ standup:
   handoff_joint_speed: 0.5
   hold_seconds: 0.5
   zero_command_seconds: 0.5
+  handoff_power_on_seconds: 0.0
   certify_budget_seconds: 40.0
   timeout_margin_seconds: 3.0
   hard_limit_tolerance: 0.017453292519943295
+commands:
+  default_cap:
+  - 1.0
+  - 1.0
+  accel:
+  - 1.5
+  - 3.0
+  decel:
+  - 3.0
+  - 6.0
+  lateral_accel_max: null

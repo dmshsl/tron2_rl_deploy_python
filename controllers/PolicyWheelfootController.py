@@ -12,6 +12,7 @@ from typing import Final, Literal
 import numpy as np
 import onnxruntime as ort
 
+from tron2_deploy.command_shaping import CommandShaper, limits_from_contract
 from tron2_deploy.height_scan_provider import HeightScanProvider
 from tron2_deploy.policy_contract import DeploymentContract
 from tron2_deploy.policy_observation import (
@@ -60,6 +61,9 @@ class PolicyWheelfootController:
         routed = standup == "learned" or (standup == "scripted" and standup_stop_at == "A")
         self.planner: RoutePlanner | None = RoutePlanner() if routed else None
         self.safety = SafetyMonitor(contract)
+        # Every command source (schedule, joystick, live GUI) goes through this: NaN -> 0, clamp to the
+        # trained range, software cap (contract commands.default_cap; set_command_cap), slew limit.
+        self.command_shaper = CommandShaper(limits_from_contract(contract))
         self.height_provider = height_provider
         options = ort.SessionOptions()
         options.intra_op_num_threads = options.inter_op_num_threads = 1
@@ -93,6 +97,7 @@ class PolicyWheelfootController:
         self.targets = None
         self.last_scan = None
         self.standup = None
+        self.command_shaper.reset()
         if self.standup_mode == "scripted":
             # The reference clock owns the start; started_at is set again at handoff.
             self.started_at = None
@@ -102,7 +107,17 @@ class PolicyWheelfootController:
             self.started_at = None
             self.standup = LearnedStandUp(self.contract, self.standup_contract, self.standup_actor, state, self.planner)
 
+    def set_command_cap(self, vx: float | None = None, wz: float | None = None) -> tuple[float, float]:
+        """Software speed cap (|vx| m/s, |wz| rad/s), clipped to the trained range; usable while running."""
+        return self.command_shaper.set_cap(vx, wz)
+
+    @property
+    def shaped_command(self):
+        """The (vx, vy, wz) the policy saw on the last tick (after clamp, cap and slew limiting)."""
+        return self.command_shaper.output
+
     def stop(self) -> None:
+        self.command_shaper.reset()
         self.enabled = False
         self.started_at = None
         self.hold_pose = None
@@ -146,6 +161,7 @@ class PolicyWheelfootController:
         self.started_at = state.timestamp
         self.last_policy_time = -np.inf
         self.targets = None
+        self.command_shaper.reset()
 
     def step(self, state: SdkState, commands: Vector) -> JointTargets:
         if self.safety.reason:
@@ -156,6 +172,10 @@ class PolicyWheelfootController:
         if self.safety.reason:
             return self.safety.damping()
         try:
+            try:  # NaN -> 0 before the finite check; a wrong shape still latches
+                commands = self.command_shaper.clamp(commands).astype(np.float32)
+            except ValueError as error:
+                raise PolicyInputError(str(error)) from error
             finite_vector(commands, 3)
             targets = self._step(state, commands)
             for value in (targets.q, targets.dq, targets.kp, targets.kd, targets.tau):
@@ -185,6 +205,7 @@ class PolicyWheelfootController:
             return torque_preclip(power_on_targets(self.hold_pose, elapsed, self.contract, ramp), state, self.contract)
         if self.standup is not None and elapsed - prepare < self.contract.standup.zero_command_seconds:
             commands = np.zeros_like(commands)
+        commands = self.command_shaper(commands, state.timestamp)
         if state.timestamp - self.last_policy_time >= self.contract.control.policy_dt - 1e-9:
             scan = None if self.height_provider is None else self.height_provider.get_scan(state)
             self.last_scan = scan

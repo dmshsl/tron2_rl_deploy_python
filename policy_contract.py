@@ -109,6 +109,26 @@ class StandupContract(FrozenModel):
     hard_limit_tolerance: float = Field(default=0.017453292519943295, ge=0, le=0.05235987755982988)
 
 
+class CommandContract(FrozenModel):
+    """Deployment command shaping (tron2_deploy/command_shaping.py); deployment settings, not training values.
+
+    command_ranges is the trained (hardware) range and the hard clamp; default_cap is the software
+    cap applied by default below it (run_policy.py may override it at start-up or at runtime);
+    accel/decel are the slew limits of the commanded (vx, wz) while speeding up / slowing down.
+    """
+
+    default_cap: tuple[float, float] = (1.0, 1.0)
+    accel: tuple[float, float] = (1.5, 3.0)
+    decel: tuple[float, float] = (3.0, 6.0)
+    lateral_accel_max: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def check_positive(self) -> "CommandContract":
+        if min(self.default_cap) < 0 or min(self.accel + self.decel) <= 0:
+            raise ValueError("command cap must be >= 0 and accelerations > 0")
+        return self
+
+
 class ImuContract(FrozenModel):
     quaternion_order: Literal["wxyz"] = "wxyz"
     imu_to_base_rpy: tuple[float, float, float]
@@ -149,6 +169,7 @@ class DeploymentContract(FrozenModel):
     scan: ScanContract
     alignment_notes: tuple[str, ...]
     standup: StandupContract = StandupContract()
+    commands: CommandContract = CommandContract()
 
     @model_validator(mode="after")
     def check_layout(self) -> "DeploymentContract":
@@ -199,6 +220,9 @@ class DeploymentContract(FrozenModel):
             raise ValueError("wheel spin sign must be +/-1")
         if len(self.command_ranges) != 3 or any(low > high for low, high in self.command_ranges):
             raise ValueError("command ranges must be three ordered finite pairs")
+        if (self.commands.default_cap[0] > max(-self.command_ranges[0][0], self.command_ranges[0][1]) + 1e-9
+                or self.commands.default_cap[1] > max(-self.command_ranges[2][0], self.command_ranges[2][1]) + 1e-9):
+            raise ValueError("commands.default_cap must not exceed the trained command range")
         if self.history_length <= 0 or self.encoder_output_size <= 0:
             raise ValueError("history and encoder dimensions must be positive")
         for term in self.policy_terms + self.history_terms + self.command_terms:

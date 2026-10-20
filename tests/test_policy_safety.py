@@ -58,7 +58,7 @@ def test_outgoing_targets_clamp_without_changing_actions(controller, state, sign
     assert np.max(np.abs(raw.dq)) == 100.
 
 
-@pytest.mark.parametrize("trigger", ["wheel", "hard_lower", "hard_upper", "tilt", "command", "history", "action", "target"])
+@pytest.mark.parametrize("trigger", ["wheel", "hard_lower", "hard_upper", "tilt", "command_shape", "history", "action", "target"])
 def test_fault_latches_damping_until_restart(controller, state, capsys, trigger):
     # Given one unsafe input on an otherwise prepared controller.
     controller.prepare(state)
@@ -74,8 +74,8 @@ def test_fault_latches_damping_until_restart(controller, state, capsys, trigger)
         current = replace(current, q=q)
     elif trigger == "tilt":
         current = replace(current, quat=np.array([np.cos(.505), np.sin(.505), 0., 0.]))
-    elif trigger == "command":
-        command[0] = np.nan
+    elif trigger == "command_shape":
+        command = np.zeros(4, dtype=np.float32)
     elif trigger == "history":
         controller.mem = replace(controller.mem, history=np.full((10, 36), np.inf, dtype=np.float32))
     elif trigger == "action":
