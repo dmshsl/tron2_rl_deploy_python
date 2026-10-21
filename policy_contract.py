@@ -121,6 +121,9 @@ class CommandContract(FrozenModel):
     accel: tuple[float, float] = (1.5, 3.0)
     decel: tuple[float, float] = (3.0, 6.0)
     lateral_accel_max: float | None = Field(default=None, gt=0)
+    # Zero-yaw-command heading hold (command_shaping.HeadingHold), trained in the command: 0 = off.
+    heading_hold_gain: float = Field(default=0.0, ge=0)
+    heading_hold_max: float = Field(default=0.3, gt=0)
 
     @model_validator(mode="after")
     def check_positive(self) -> "CommandContract":

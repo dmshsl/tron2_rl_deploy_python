@@ -153,12 +153,12 @@ def test_contract_when_regenerated_matches_and_rejects_nan(contract):
         DeploymentContract.model_validate(data)
 
 
-@pytest.mark.parametrize("policy,fixture", [("base", "v23"), ("base_blind", "v22")])
-def test_contract_when_generated_from_fixture_matches_shipped(policy, fixture):
+@pytest.mark.parametrize("policy,fixture,heading_hold", [("base", "hw", (1.0, 0.3)), ("base_blind", "v22", None)])
+def test_contract_when_generated_from_fixture_matches_shipped(policy, fixture, heading_hold):
     from tron2_deploy.policy_contract import load_contract
     from tron2_rl.scripts.rsl_rl.export_deploy_contract import generate
-    # Given the original fixture, when regenerating, then every deployed value matches.
-    generated = generate(ROOT / f"tron2_rl/tests/fixtures/{fixture}_config.json", policy)
+    # Given the original fixture (Base-HW: plus the deploy-side heading hold), when regenerating, then every deployed value matches.
+    generated = generate(ROOT / f"tron2_rl/tests/fixtures/{fixture}_config.json", policy, heading_hold)
     shipped = load_contract(ROOT / f"tron2_deploy/controllers/model/WF_TRON2A_{policy.upper()}/contract.yaml")
     assert generated == shipped
 

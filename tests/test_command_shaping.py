@@ -155,3 +155,29 @@ def test_controller_shapes_every_command_and_nan_does_not_latch(controller) -> N
     assert controller.set_command_cap(vx=0.2) == (0.2, contract.commands.default_cap[1])
     controller.stop()
     assert np.all(controller.shaped_command == 0.)
+
+
+def test_environment_cap_override_is_clipped_to_the_trained_range(monkeypatch) -> None:
+    monkeypatch.setenv("TRON2_COMMAND_CAP", "9:0.5")
+    model = MODELS / "WF_TRON2A_BASE_BLIND"
+    contract = load_contract(model / "contract.yaml")
+    controller = PolicyWheelfootController(model, contract)
+    reach = max(-contract.command_ranges[0][0], contract.command_ranges[0][1])
+    assert controller.command_shaper.limits.cap[0] == reach and controller.command_shaper.limits.cap[2] == 0.5
+
+
+def test_heading_hold_steers_back_only_at_zero_yaw_command() -> None:
+    from tron2_deploy.command_shaping import HeadingHold, yaw_of
+
+    hold = HeadingHold(gain=1.0, max_rate=0.3)
+    assert np.all(HeadingHold(0.0, 0.3)(np.zeros(3, np.float32), 0.0, 0.5) == 0.0)
+    assert hold(np.zeros(3, np.float32), 0.0, 0.1)[2] == 0.0          # first call arms ref = 0.1
+    assert np.isclose(hold(np.zeros(3, np.float32), 0.0, 0.15)[2], -0.05, atol=1e-6)
+    assert hold(np.zeros(3, np.float32), 0.0, 1.5)[2] == np.float32(-0.3)  # clipped
+    turning = np.array([0.0, 0.0, 0.4], np.float32)
+    assert hold(turning, 0.4, 2.0)[2] == np.float32(0.4)              # operator turning: unchanged, ref follows
+    assert hold(np.zeros(3, np.float32), 0.0, 2.0)[2] == 0.0
+    assert np.isclose(hold(np.zeros(3, np.float32), 0.0, 2.0 - 2 * np.pi + 0.02)[2], -0.02, atol=1e-5)  # wrapped
+    hold.reset()
+    assert hold(np.zeros(3, np.float32), 0.0, -1.0)[2] == 0.0
+    assert np.isclose(yaw_of(np.array([np.cos(0.25), 0.0, 0.0, np.sin(0.25)])), 0.5)

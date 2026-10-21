@@ -1,7 +1,7 @@
 schema_version: 1
 policy: base
-source_task: Isaac-Limx-WF-TRON2A-V23
-fixture_sha256: 00cd2e2818022c985c4484d35ab7f4dde67ef2194da607d0240117837a8be02d
+source_task: Isaac-Limx-WF-TRON2A-Base-HW
+fixture_sha256: 193545438131d848dd7d3f8faff0274be0afa988bb4de2b52842e23c6004cab9
 source_code_sha256:
   tron2_rl/exts/bipedal_locomotion/bipedal_locomotion/tasks/locomotion/cfg/WF_TRON2A/kiro_v21_mdp.py: 5c693d5c3134fbd83c9b26a48c7b831c1b7c65ff0a9d27e3cdec14feac960738
   tron2_deploy/controllers/model/WF_TRON2A/params.yaml: 6ef76b28d28055686a3dd0670cd5698cb87a58636e84871c4fd34606239e328d
@@ -179,41 +179,41 @@ control:
   - 10.16
   - 0.6
   torque_limit:
-  - 140.0
-  - 140.0
-  - 40.0
-  - 140.0
-  - 20.0
-  - 140.0
-  - 140.0
-  - 40.0
-  - 140.0
-  - 20.0
+  - 150.0
+  - 150.0
+  - 60.0
+  - 150.0
+  - 22.0
+  - 150.0
+  - 150.0
+  - 60.0
+  - 150.0
+  - 22.0
   training_torque_limit:
-  - 140.0
-  - 140.0
-  - 40.0
-  - 140.0
-  - 20.0
-  - 140.0
-  - 140.0
-  - 40.0
-  - 140.0
-  - 20.0
+  - 150.0
+  - 150.0
+  - 60.0
+  - 150.0
+  - 22.0
+  - 150.0
+  - 150.0
+  - 60.0
+  - 150.0
+  - 22.0
   power_on_seconds: 3.0
   initial_gain_fraction: 0.2
 safety:
   velocity_limit:
-  - 12.57
-  - 12.57
-  - 14.66
-  - 12.57
-  - 40.0
-  - 12.57
-  - 12.57
-  - 14.66
-  - 12.57
-  - 40.0
+  - 18.3
+  - 18.3
+  - 22.52
+  - 18.3
+  - 41.89
+  - 18.3
+  - 18.3
+  - 22.52
+  - 18.3
+  - 41.89
   hard_position_limits:
   - - -3.141592653589793
     - 2.600540585471551
@@ -317,7 +317,7 @@ policy_terms:
   - 4
   - 9
 - name: height_scan
-  func: bipedal_locomotion.tasks.locomotion.cfg.WF_TRON2A.kiro_v21_mdp.height_scan_corrupted
+  func: bipedal_locomotion.tasks.locomotion.cfg.WF_TRON2A.kiro_v21_mdp.height_scan_realmap
   size: 231
   scale: 1.0
   clip:
@@ -389,12 +389,12 @@ command_terms:
   clip: null
   sdk_indices: []
 command_ranges:
-- - -1.0
-  - 1.0
+- - -3.0
+  - 3.0
 - - 0.0
   - 0.0
-- - -1.0
-  - 1.0
+- - -2.0
+  - 2.0
 history_length: 10
 history_frame_size: 36
 actor_size: 273
@@ -433,8 +433,8 @@ alignment_notes:
 - Power-on 3.0 seconds and gain ramp 0.2 to 1.0 are deployment safety requirements,
   not training values.
 - Vendor publish rate retained; inference period follows training sim.dt * decimation.
-- Wheel torque/velocity limits use training actuators; leg torque limits retain vendor
-  values.
+- Torque and velocity limits are the vendor URDF values, which are also the training
+  actuator limits.
 - Target position bounds shrink URDF ranges about their midpoint by the training soft-limit
   factor; actor/history are unchanged.
 - Training observation noise and action latency randomization are not injected on
@@ -442,6 +442,8 @@ alignment_notes:
 - Commands are physical vx, vy, wz; generated_commands returns them unchanged. Sampling
   ranges are not observation clipping.
 - IMU-to-base rotation remains UNVERIFIED until hardware calibration.
+- Heading hold (zero operator yaw command -> wz = clip(1 * heading error, +-0.3 rad/s))
+  is a deploy-side command law, not trained in the source task.
 standup:
   tilt_limit: 1.2
   speed_limit: 1.0
@@ -466,4 +468,6 @@ commands:
   decel:
   - 3.0
   - 6.0
-  lateral_accel_max: null
+  lateral_accel_max: 3.0
+  heading_hold_gain: 1.0
+  heading_hold_max: 0.3

@@ -5,6 +5,7 @@ Import as PolicyWheelfootController with this directory on sys.path, avoiding th
 vendor controllers/__init__.py which eagerly imports SDK and GUI dependencies.
 """
 
+import os
 from dataclasses import replace
 from pathlib import Path
 from typing import Final, Literal
@@ -12,7 +13,7 @@ from typing import Final, Literal
 import numpy as np
 import onnxruntime as ort
 
-from tron2_deploy.command_shaping import CommandShaper, limits_from_contract
+from tron2_deploy.command_shaping import CommandShaper, HeadingHold, limits_from_contract, yaw_of
 from tron2_deploy.height_scan_provider import HeightScanProvider
 from tron2_deploy.policy_contract import DeploymentContract
 from tron2_deploy.policy_observation import (
@@ -37,6 +38,7 @@ from tron2_deploy.standup_policy import LearnedStandUp, StandupActor, check_comp
 
 StandupMode = Literal["none", "scripted", "learned"]
 STANDUP_MODEL: Final = Path(__file__).resolve().parent / "model/WF_TRON2A_STANDUP"
+COMMAND_CAP_ENV_VAR: Final = "TRON2_COMMAND_CAP"
 
 
 class PolicyWheelfootController:
@@ -64,6 +66,11 @@ class PolicyWheelfootController:
         # Every command source (schedule, joystick, live GUI) goes through this: NaN -> 0, clamp to the
         # trained range, software cap (contract commands.default_cap; set_command_cap), slew limit.
         self.command_shaper = CommandShaper(limits_from_contract(contract))
+        self.heading_hold = HeadingHold(contract.commands.heading_hold_gain, contract.commands.heading_hold_max)
+        cap = os.environ.get(COMMAND_CAP_ENV_VAR)
+        if cap:  # simulation/test seam ("vx:wz"); still clipped to the trained command range
+            vx, wz = (float(v) for v in cap.split(":"))
+            print(f"COMMAND_CAP {COMMAND_CAP_ENV_VAR} -> {self.set_command_cap(vx, wz)}", flush=True)
         self.height_provider = height_provider
         options = ort.SessionOptions()
         options.intra_op_num_threads = options.inter_op_num_threads = 1
@@ -98,6 +105,7 @@ class PolicyWheelfootController:
         self.last_scan = None
         self.standup = None
         self.command_shaper.reset()
+        self.heading_hold.reset()
         if self.standup_mode == "scripted":
             # The reference clock owns the start; started_at is set again at handoff.
             self.started_at = None
@@ -118,6 +126,7 @@ class PolicyWheelfootController:
 
     def stop(self) -> None:
         self.command_shaper.reset()
+        self.heading_hold.reset()
         self.enabled = False
         self.started_at = None
         self.hold_pose = None
@@ -162,6 +171,7 @@ class PolicyWheelfootController:
         self.last_policy_time = -np.inf
         self.targets = None
         self.command_shaper.reset()
+        self.heading_hold.reset()
 
     def step(self, state: SdkState, commands: Vector) -> JointTargets:
         if self.safety.reason:
@@ -206,6 +216,7 @@ class PolicyWheelfootController:
         if self.standup is not None and elapsed - prepare < self.contract.standup.zero_command_seconds:
             commands = np.zeros_like(commands)
         commands = self.command_shaper(commands, state.timestamp)
+        commands = self.heading_hold(commands, float(self.command_shaper.target[2]), yaw_of(state.quat))
         if state.timestamp - self.last_policy_time >= self.contract.control.policy_dt - 1e-9:
             scan = None if self.height_provider is None else self.height_provider.get_scan(state)
             self.last_scan = scan

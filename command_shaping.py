@@ -138,3 +138,35 @@ def limits_from_contract(contract) -> CommandLimits:
         cap=(cfg.default_cap[0], max(-ranges[1][0], ranges[1][1]), cfg.default_cap[1]),
         accel=(cfg.accel[0], cfg.accel[0], cfg.accel[1]), decel=(cfg.decel[0], cfg.decel[0], cfg.decel[1]),
         lateral_accel_max=cfg.lateral_accel_max)
+
+
+def yaw_of(quat_wxyz: np.ndarray) -> float:
+    w, x, y, z = (float(v) for v in quat_wxyz)
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+class HeadingHold:
+    """Zero-yaw-command heading hold, the law trained in HardwareJoystickCommand (tron2_rl):
+    while the operator's yaw command (shaper target) and the shaped yaw rate are both zero, the
+    policy gets wz = clip(gain * wrap(ref - yaw), +-max), ref = the yaw when the robot last turned
+    (or at reset). gain 0 passes the command through unchanged."""
+
+    def __init__(self, gain: float, max_rate: float) -> None:
+        if gain < 0 or not max_rate > 0:
+            raise ValueError("heading hold gain must be >= 0 and max_rate > 0")
+        self.gain, self.max_rate = gain, max_rate
+        self.ref: float | None = None
+
+    def reset(self) -> None:
+        self.ref = None
+
+    def __call__(self, shaped: np.ndarray, target_wz: float, yaw: float) -> np.ndarray:
+        if self.gain <= 0:
+            return shaped
+        if self.ref is None or target_wz != 0.0 or shaped[2] != 0.0:
+            self.ref = yaw
+            return shaped
+        error = math.remainder(self.ref - yaw, 2.0 * math.pi)
+        out = np.array(shaped, dtype=np.float32, copy=True)
+        out[2] = np.float32(min(max(self.gain * error, -self.max_rate), self.max_rate))
+        return out
